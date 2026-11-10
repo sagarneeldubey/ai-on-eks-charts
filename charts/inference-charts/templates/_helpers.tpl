@@ -86,7 +86,7 @@ app.kubernetes.io/component: {{.Values.inference.serviceName}}
     {{- $args = append $args (printf "--load-format %s" .Values.vllm.loadFormat ) }}
 {{- end}}
 {{- /* llama.cpp and the decision-model servers have no tensor parallel flag. */}}
-{{- if and (not (has .Values.inference.framework (list "llama-cpp" "kev" "strands-decider"))) (not (.Values.modelParameters | default dict).tensorParallelSize) (ne .Values.inference.accelerator "graviton")}}
+{{- if and (not (has .Values.inference.framework (list "llama-cpp" "kev" "strands-decider" "surogate" "decider"))) (not (.Values.modelParameters | default dict).tensorParallelSize) (ne .Values.inference.accelerator "graviton")}}
     {{- if eq .Values.inference.accelerator "neuron"}}
         {{- $tpsize = mul (index .Values.inference.modelServer.deployment.resources.neuron.requests "aws.amazon.com/neuron") 2}}
     {{- else }}
@@ -166,20 +166,33 @@ pinned packages, downloads the pinned model snapshot, checks CUDA, then execs th
 */}}
 {{- define "inference-charts.decisionModelStartScript" -}}
 {{- $dm := .Values.decisionModel -}}
+{{- $framework := .Values.inference.framework -}}
 set -euo pipefail
 {{- if $dm.hostDriverLibs.enabled }}
 export LD_LIBRARY_PATH="{{ $dm.hostDriverLibs.mountDir }}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 {{- end }}
+{{- with $dm.preStartScript }}
+{{ . | trim }}
+{{- end }}
 {{- range $dm.pipInstalls }}
 python3 -m pip install --no-cache-dir{{ with .indexUrl }} --index-url {{ . | squote }}{{ end }}{{ range .packages }} {{ . | squote }}{{ end }}
 {{- end }}
+{{- /* decider and decision-vllm load the model through vLLM, which downloads it itself. */}}
+{{- if has $framework (list "kev" "strands-decider" "surogate") }}
 python3 -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="{{ .Values.model }}",{{ with $dm.revision }} revision="{{ . }}",{{ end }} local_dir="/models/checkpoint")'
+{{- end }}
 python3 -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; print("CUDA preflight:", torch.cuda.get_device_name(0))'
 {{- $params := include "inference-charts.modelParameters" . | trim }}
-{{- if eq .Values.inference.framework "kev" }}
+{{- if eq $framework "kev" }}
 exec python3 -m kev.serve --run /models/checkpoint --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
-{{- else }}
+{{- else if eq $framework "strands-decider" }}
 exec strands-decider serve /models/checkpoint --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+{{- else if eq $framework "surogate" }}
+exec surogate serve /models/checkpoint --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+{{- else if eq $framework "decider" }}
+exec uvicorn decider.serve_vllm:app --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+{{- else }}
+exec vllm serve {{ .Values.model | squote }}{{ with $dm.revision }} --revision {{ . }}{{ end }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- end }}
 {{- end -}}
 

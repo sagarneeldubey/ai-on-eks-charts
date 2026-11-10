@@ -49,27 +49,9 @@ inference:
     deployment:
       replicas: 1
       runtimeClassName: nvidia
-      strategy:
-        type: Recreate
-      progressDeadlineSeconds: 1800
-      revisionHistoryLimit: 2
-      terminationGracePeriodSeconds: 120
       sharedMemory: 4Gi
-      podAnnotations:
-        # CloudWatch Application Signals auto-instrumentation overrides model
-        # dependencies, so retain infrastructure metrics but disable its language
-        # runtimes for this pod.
-        cloudwatch.aws.amazon.com/auto-annotate-dotnet: "false"
-        cloudwatch.aws.amazon.com/auto-annotate-java: "false"
-        cloudwatch.aws.amazon.com/auto-annotate-nodejs: "false"
-        cloudwatch.aws.amazon.com/auto-annotate-python: "false"
-        instrumentation.opentelemetry.io/inject-dotnet: "false"
-        instrumentation.opentelemetry.io/inject-java: "false"
-        instrumentation.opentelemetry.io/inject-nodejs: "false"
-        instrumentation.opentelemetry.io/inject-python: "false"
-        prometheus.io/scrape: "true"
-        prometheus.io/path: /metrics
-        prometheus.io/port: "8000"
+      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
+      # and the observability pod annotations come from the chart's decision-model defaults.
       nodeAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:
           nodeSelectorTerms:
@@ -83,10 +65,6 @@ inference:
                   operator: In
                   values:
                     - g5
-      tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule
       readinessProbe:
         httpGet:
           path: /health

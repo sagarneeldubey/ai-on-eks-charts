@@ -58,17 +58,20 @@ llamaCpp:
     periodSeconds: 10
     failureThreshold: 180
 
-# Decision-model servers (framework: kev or strands-decider) settings.
-# These servers ship as Python packages rather than images: the pod starts from a CUDA/Python
-# base image, pip-installs the pinned server packages, downloads the model snapshot from
-# Hugging Face into /models/checkpoint, checks CUDA, then execs the server. GPU only.
+# Decision-model servers (framework: kev, strands-decider, surogate, decider, or decision-vllm) settings.
+# The pod starts from a CUDA/Python base image, pip-installs the pinned server packages, checks CUDA,
+# then execs the server. kev, strands-decider and surogate first download the model snapshot into
+# /models/checkpoint; decider (uvicorn decider.serve_vllm:app) and decision-vllm (vllm serve) let vLLM
+# download it. GPU only.
 decisionModel:
-  # Hugging Face commit to download. Pin it so restarts serve identical weights; empty = default branch.
+  # Hugging Face commit to serve. Pin it so restarts serve identical weights; empty = default branch.
   revision:
   # Port the server listens on inside the pod. The Service still exposes service.port.
   containerPort: 8000
+  # Optional shell lines run before the pip installs, e.g. a temporary patch to the image.
+  preStartScript: ""
   # pip install invocations, run in order at startup.
-  # Each entry: {packages: [<requirement specifier>, ...], indexUrl: <optional --index-url>}
+  # Each entry: {packages: [<requirement specifier or pip flag>, ...], indexUrl: <optional --index-url>}
   pipInstalls: []
   # Size limit of the /models emptyDir that holds the Hugging Face cache and the checkpoint.
   modelCacheSize: 100Gi
@@ -108,7 +111,7 @@ inference:
   # graviton runs on ARM64 CPU instances (no GPU/Neuron device plugin), e.g. llama.cpp or CPU vLLM builds.
   accelerator: gpu
 
-  # Framework type: vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, or strands-decider
+  # Framework type: vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, strands-decider, surogate, decider, or decision-vllm
   framework:
 
   #Ray Specific Options
@@ -248,17 +251,21 @@ inference:
           port: 8000
       # Optional; rendered when set (vllm deployment; tolerations also apply to nim-container).
       # The kev / strands-decider deployment renders all of these, including the "decision-model only" keys.
+      # When left empty, the decision-model deployment fills in the defaults noted as "decision-model default".
       lifecycle: {} # e.g. {preStop: {exec: {command: ["/bin/sh", "-c", "sleep 15"]}}}
       livenessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 20}
       nodeAffinity: {} # decision-model only; e.g. {requiredDuringSchedulingIgnoredDuringExecution: {nodeSelectorTerms: [...]}}
-      podAnnotations: {} # decision-model only; e.g. {prometheus.io/scrape: "true"}
-      progressDeadlineSeconds: # decision-model only; e.g. 1800 when startup installs packages and downloads weights
+      # decision-model only; merged over the decision-model default annotations, which turn off CloudWatch
+      # Application Signals / OpenTelemetry auto-instrumentation and set prometheus.io/scrape, path (/metrics),
+      # and port (decisionModel.containerPort).
+      podAnnotations: {}
+      progressDeadlineSeconds: # decision-model only; decision-model default 1800 (package installs + weight download)
       readinessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 10}
-      revisionHistoryLimit: # decision-model only; e.g. 2
+      revisionHistoryLimit: # decision-model only; decision-model default 2
       runtimeClassName: # decision-model only; e.g. nvidia
-      strategy: {} # decision-model only; e.g. {type: Recreate} to free a single-GPU node before the new pod starts
-      terminationGracePeriodSeconds: # e.g. 300, so in-flight generations finish before SIGKILL
-      tolerations: [] # e.g. [{key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule"}]
+      strategy: {} # decision-model only; decision-model default {type: Recreate} to free a single-GPU node before the new pod starts
+      terminationGracePeriodSeconds: # e.g. 300, so in-flight generations finish before SIGKILL; decision-model default 120
+      tolerations: [] # e.g. [{key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule"}]; that is the decision-model default
     env: {}
 
 s3ModelCopy:
