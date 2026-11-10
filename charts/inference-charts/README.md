@@ -177,7 +177,7 @@ The following table lists the configurable parameters of the inference-charts ch
 |--------------------------------------------------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
 | `global.image.pullPolicy`                                                | Global image pull policy                                                            | `IfNotPresent`                                                              |
 | `inference.accelerator`                                                  | Accelerator type to use (gpu, neuron, or graviton)                                  | `gpu`                                                                       |
-| `inference.framework`                                                    | Framework type to use (vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, strands-decider, diffusers, nim-container, or nim-operator) | `vllm`                                                                      |
+| `inference.framework`                                                    | Framework type to use (vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, strands-decider, surogate, decider, decision-vllm, diffusers, nim-container, or nim-operator) | `vllm`                                                                      |
 | `inference.serviceName`                                                  | Name of the inference service                                                       | `inference`                                                                 |
 | `inference.serviceNamespace`                                             | Namespace for the inference service                                                 | `default`                                                                   |
 | `inference.modelServer.image.repository`                                 | Model server image repository                                                       | `vllm/vllm-openai`                                                          |
@@ -195,17 +195,18 @@ The following table lists the configurable parameters of the inference-charts ch
 | `inference.modelServer.deployment.lifecycle`                             | Lifecycle hooks for the vLLM container (e.g. preStop)                               | `{}`                                                                        |
 | `inference.modelServer.deployment.livenessProbe`                         | Liveness probe for vLLM or llama.cpp (llama.cpp defaults to `/health`)              | `{}`                                                                        |
 | `inference.modelServer.deployment.readinessProbe`                        | Readiness probe for vLLM or llama.cpp (llama.cpp defaults to `/health`)             | `{}`                                                                        |
-| `inference.modelServer.deployment.terminationGracePeriodSeconds`         | Termination grace period for the vLLM pod                                           | Not set                                                                     |
-| `inference.modelServer.deployment.tolerations`                           | Pod tolerations (vLLM, llama.cpp, decision models, and NIM container)               | `[]`                                                                        |
+| `inference.modelServer.deployment.terminationGracePeriodSeconds`         | Termination grace period for the vLLM and decision-model pods                       | Not set (decision models: `120`)                                            |
+| `inference.modelServer.deployment.tolerations`                           | Pod tolerations (vLLM, llama.cpp, decision models, and NIM container)               | `[]` (decision models: `nvidia.com/gpu` Exists NoSchedule)                  |
 | `inference.modelServer.deployment.nodeAffinity`                          | Pod node affinity (decision models)                                                 | `{}`                                                                        |
-| `inference.modelServer.deployment.podAnnotations`                        | Pod annotations (decision models)                                                   | `{}`                                                                        |
+| `inference.modelServer.deployment.podAnnotations`                        | Extra pod annotations, merged over the defaults (decision models)                   | CloudWatch/OpenTelemetry auto-instrumentation off; Prometheus scrape on `decisionModel.containerPort` at `/metrics` |
 | `inference.modelServer.deployment.runtimeClassName`                      | Pod runtime class, e.g. `nvidia` (decision models)                                  | Not set                                                                     |
-| `inference.modelServer.deployment.strategy`                              | Deployment update strategy, e.g. `{type: Recreate}` (decision models)               | `{}`                                                                        |
-| `inference.modelServer.deployment.progressDeadlineSeconds`               | Deployment progress deadline (decision models)                                      | Not set                                                                     |
-| `inference.modelServer.deployment.revisionHistoryLimit`                  | Deployment revision history limit (decision models)                                 | Not set                                                                     |
+| `inference.modelServer.deployment.strategy`                              | Deployment update strategy (decision models)                                        | `{type: Recreate}`                                                          |
+| `inference.modelServer.deployment.progressDeadlineSeconds`               | Deployment progress deadline (decision models)                                      | `1800`                                                                      |
+| `inference.modelServer.deployment.revisionHistoryLimit`                  | Deployment revision history limit (decision models)                                 | `2`                                                                         |
 | `llamaCpp.startupProbe`                                                  | llama.cpp startup health check; allows up to 30 minutes for model download         | `/health`, every 10s, 180 failures                                         |
-| `decisionModel.revision`                                                 | Hugging Face commit to download for kev / strands-decider                           | Not set (default branch)                                                    |
+| `decisionModel.revision`                                                 | Hugging Face commit to serve (not used by decider)                                  | Not set (default branch)                                                    |
 | `decisionModel.containerPort`                                            | Port the decision-model server listens on in the pod                                | `8000`                                                                      |
+| `decisionModel.preStartScript`                                           | Shell lines run before the pip installs, e.g. a temporary image patch               | `""`                                                                        |
 | `decisionModel.pipInstalls`                                              | Ordered `pip install` steps: `{packages: [...], indexUrl: ...}`                     | `[]`                                                                        |
 | `decisionModel.modelCacheSize`                                           | Size limit of the `/models` emptyDir (HF cache + checkpoint)                        | `100Gi`                                                                     |
 | `decisionModel.extraEnv`                                                 | Extra env vars in Kubernetes EnvVar form (supports `valueFrom` secrets)             | `[]`                                                                        |
@@ -287,7 +288,11 @@ The chart includes pre-configured values files for the following models:
 
 #### Decision Models
 
+- **d1-3B**: `values-d1-3b-vllm.yaml` (vLLM, g5)
+- **Decider 35B-A3B NVFP4**: `values-decider-35b-a3b-nvfp4.yaml` (Decider, g7e)
+- **Gemma 4 31B**: `values-gemma-4-31b-it-vllm.yaml` (vLLM, g7e)
 - **Kev 27B**: `values-kev-27b.yaml` (Kev, g7e)
+- **Rune 26B-A4B v3**: `values-rune-26b-a4b-v3-surogate.yaml` (Surogate, g7e)
 - **Strands Decider 2B**: `values-strands-decider-2b.yaml` (Strands Decider, g5)
 
 #### Diffusion Models
@@ -513,14 +518,24 @@ curl -X POST http://localhost:8000/v1/generations \
 
 ## Decision Model Frameworks
 
-`framework: kev` and `framework: strands-decider` serve decision models whose servers ship as Python packages
-rather than container images. The pod starts from a CUDA/Python base image and runs these steps:
+These frameworks serve decision models from a CUDA/Python base image:
 
-1. Runs each `decisionModel.pipInstalls` step in order (pin every package).
-2. Downloads `model` at `decisionModel.revision` from Hugging Face into `/models/checkpoint`.
-3. Fails fast if CUDA is unavailable.
-4. Execs the server: `python3 -m kev.serve --run /models/checkpoint ...` or
-   `strands-decider serve /models/checkpoint ...` (with `modelParameters` as flags).
+| `framework`       | Server                                         | Model download                  |
+| ----------------- | ---------------------------------------------- | ------------------------------- |
+| `kev`             | `python3 -m kev.serve --run /models/checkpoint` | Chart, into `/models/checkpoint` |
+| `strands-decider` | `strands-decider serve /models/checkpoint`     | Chart, into `/models/checkpoint` |
+| `surogate`        | `surogate serve /models/checkpoint`            | Chart, into `/models/checkpoint` |
+| `decider`         | `uvicorn decider.serve_vllm:app` (`DECIDER_*` env) | vLLM                        |
+| `decision-vllm`   | `vllm serve <model> --revision <revision>`     | vLLM                            |
+
+The pod runs these steps:
+
+1. Runs `decisionModel.preStartScript`, if set.
+2. Runs each `decisionModel.pipInstalls` step in order (pin every package).
+3. For `kev`, `strands-decider` and `surogate`, downloads `model` at `decisionModel.revision` from Hugging Face
+   into `/models/checkpoint`.
+4. Fails fast if CUDA is unavailable.
+5. Execs the server, with `modelParameters` as flags.
 
 Notes:
 
@@ -531,10 +546,12 @@ Notes:
   escalation, and all capabilities dropped.
 - On Bottlerocket nodes, set `decisionModel.hostDriverLibs.enabled: true` to mount only `libcuda.so.1` and
   `libnvidia-ml.so.1` from the host, read-only.
-- Scheduling uses `inference.modelServer.deployment.nodeAffinity`; the example values require the g7e (Kev) or
-  g5 (Strands Decider) instance family via both Karpenter and EKS Auto Mode node labels.
-- The Service is `ClusterIP`. Kev enforces its API key (`kev-api-key` secret); Strands Decider has no
-  built-in authentication, so keep it cluster-internal.
+- The example values set `runtimeClassName: nvidia`. The NVIDIA GPU Operator creates that RuntimeClass
+  (`enable_nvidia_gpu_operator = true` in the AI on EKS infrastructure); without it, pods are rejected.
+- Scheduling uses `inference.modelServer.deployment.nodeAffinity`; the example values require the g7e or g5
+  instance family via both Karpenter and EKS Auto Mode node labels.
+- The Service is `ClusterIP`. Kev enforces its API key (`kev-api-key` secret); the other servers have no
+  built-in authentication, so keep them cluster-internal.
 
 ## S3 Model Copy
 
@@ -827,6 +844,30 @@ helm install kev-27b ai-on-eks/inference-charts -f https://raw.githubusercontent
 
 ```bash
 helm install strands-decider-2b ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-strands-decider-2b.yaml
+```
+
+### Deploy Decider 35B-A3B decision model
+
+```bash
+helm install decider-35b-a3b-nvfp4 ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decider-35b-a3b-nvfp4.yaml
+```
+
+### Deploy Rune 26B-A4B v3 decision model
+
+The model repository is gated; accept its terms on Hugging Face and create the `hf-token` secret first
+(see [Create Hugging Face Token Secret](#create-hugging-face-token-secret-gated-models-only)).
+
+```bash
+helm install rune-26b-a4b-v3-surogate ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-rune-26b-a4b-v3-surogate.yaml
+```
+
+### Deploy Gemma 4 31B and d1-3B decision models
+
+Both are served by vLLM with raw logprobs on the OpenAI-compatible API under `/v1`.
+
+```bash
+helm install gemma-4-31b-it-vllm ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-gemma-4-31b-it-vllm.yaml
+helm install d1-3b-vllm ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-d1-3b-vllm.yaml
 ```
 
 ### Deploy Graviton (ARM64 CPU) Models

@@ -26,7 +26,7 @@ The following service is available:
   http://{{ .Values.inference.serviceName }}:{{ .Values.service.port }}/v1/chat/completions
 {{- end }}
 
-{{- if has .Values.inference.framework (list "kev" "strands-decider") }}
+{{- if has .Values.inference.framework (list "kev" "strands-decider" "surogate" "decider" "decision-vllm") }}
 {{ .Values.inference.framework | title }} decision-model Service:
   $ kubectl get svc {{ .Values.inference.serviceName }} -n {{ .Values.inference.serviceNamespace }}
 
@@ -125,8 +125,8 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   }'
 
 
-{{- else if has .Values.inference.framework (list "kev" "strands-decider") }}
-{{- /* Decision-model servers are not OpenAI-compatible; their notes are printed above. */}}
+{{- else if has .Values.inference.framework (list "kev" "strands-decider" "surogate" "decider" "decision-vllm") }}
+{{- /* Decision-model notes are printed above; decision-vllm also serves the OpenAI-compatible API under /v1. */}}
 {{- else }}
 Example curl command to test the API:
 
@@ -155,7 +155,7 @@ Available API endpoints:
 No inference service was enabled. Please set both accelerator and framework values:
 
 - inference.accelerator: gpu, neuron, or graviton
-- inference.framework: vllm, ray-vllm, triton-vllm, diffusers, lws-vllm, aibrix, llama-cpp, kev, strands-decider, nim-container, or nim-operator
+- inference.framework: vllm, ray-vllm, triton-vllm, diffusers, lws-vllm, aibrix, llama-cpp, kev, strands-decider, surogate, decider, decision-vllm, nim-container, or nim-operator
 
 For example:
   $ helm upgrade {{ .Release.Name }} . --set inference.accelerator=gpu --set inference.framework=vllm
