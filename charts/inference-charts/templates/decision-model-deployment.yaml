@@ -1,9 +1,33 @@
-{{- if has .Values.inference.framework (list "kev" "strands-decider") }}
+{{- if has .Values.inference.framework (list "kev" "strands-decider" "surogate" "decider" "decision-vllm") }}
 {{- if ne .Values.inference.accelerator "gpu" }}
 {{- fail (printf "inference.framework %s requires inference.accelerator: gpu" .Values.inference.framework) }}
 {{- end }}
 {{- $deployment := .Values.inference.modelServer.deployment }}
 {{- $dm := .Values.decisionModel }}
+{{- /* Defaults shared by every decision model. A values file overrides any of them by setting the key. */}}
+{{- $strategy := $deployment.strategy | default (dict "type" "Recreate") }}
+{{- $progressDeadlineSeconds := $deployment.progressDeadlineSeconds | default 1800 }}
+{{- $revisionHistoryLimit := ternary 2 $deployment.revisionHistoryLimit (kindIs "invalid" $deployment.revisionHistoryLimit) }}
+{{- $terminationGracePeriodSeconds := $deployment.terminationGracePeriodSeconds | default 120 }}
+{{- $tolerations := $deployment.tolerations | default (list (dict "key" "nvidia.com/gpu" "operator" "Exists" "effect" "NoSchedule")) }}
+{{- /* CloudWatch Application Signals and OpenTelemetry auto-instrumentation can override the
+       pip-installed model dependencies, so they are switched off; Prometheus scrapes the server port. */}}
+{{- $defaultPodAnnotations := dict
+      "cloudwatch.aws.amazon.com/auto-annotate-dotnet" "false"
+      "cloudwatch.aws.amazon.com/auto-annotate-java" "false"
+      "cloudwatch.aws.amazon.com/auto-annotate-nodejs" "false"
+      "cloudwatch.aws.amazon.com/auto-annotate-python" "false"
+      "instrumentation.opentelemetry.io/inject-dotnet" "false"
+      "instrumentation.opentelemetry.io/inject-java" "false"
+      "instrumentation.opentelemetry.io/inject-nodejs" "false"
+      "instrumentation.opentelemetry.io/inject-python" "false"
+      "prometheus.io/scrape" "true"
+      "prometheus.io/path" "/metrics"
+      "prometheus.io/port" (toString $dm.containerPort) }}
+{{- $podAnnotations := deepCopy $defaultPodAnnotations }}
+{{- range $key, $value := ($deployment.podAnnotations | default dict) }}
+{{- $_ := set $podAnnotations $key (toString $value) }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,16 +38,10 @@ metadata:
     {{- include "inference-charts.extraLabels" . | nindent 4 }}
 spec:
   replicas: {{ $deployment.replicas }}
-  {{- with $deployment.strategy }}
   strategy:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-  {{- with $deployment.progressDeadlineSeconds }}
-  progressDeadlineSeconds: {{ . }}
-  {{- end }}
-  {{- if not (kindIs "invalid" $deployment.revisionHistoryLimit) }}
-  revisionHistoryLimit: {{ $deployment.revisionHistoryLimit }}
-  {{- end }}
+    {{- toYaml $strategy | nindent 4 }}
+  progressDeadlineSeconds: {{ $progressDeadlineSeconds }}
+  revisionHistoryLimit: {{ $revisionHistoryLimit }}
   selector:
     matchLabels:
       "app.kubernetes.io/component": "{{ .Values.inference.serviceName }}"
@@ -32,10 +50,8 @@ spec:
       labels:
         "app.kubernetes.io/component": "{{ .Values.inference.serviceName }}"
         {{- include "inference-charts.extraLabels" . | nindent 8 }}
-      {{- with $deployment.podAnnotations }}
       annotations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- toYaml $podAnnotations | nindent 8 }}
     spec:
       {{- with $deployment.runtimeClassName }}
       runtimeClassName: {{ . }}
@@ -43,9 +59,7 @@ spec:
       serviceAccountName: {{ .Values.serviceAccountName }}
       # The model server never calls the Kubernetes API, so it gets no API token.
       automountServiceAccountToken: false
-      {{- with $deployment.terminationGracePeriodSeconds }}
-      terminationGracePeriodSeconds: {{ . }}
-      {{- end }}
+      terminationGracePeriodSeconds: {{ $terminationGracePeriodSeconds }}
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -123,10 +137,8 @@ spec:
               mountPath: {{ $dm.hostDriverLibs.mountDir }}/libnvidia-ml.so.1
               readOnly: true
             {{- end }}
-      {{- with $deployment.tolerations }}
       tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- toYaml $tolerations | nindent 8 }}
       {{- if $deployment.instanceType }}
       nodeSelector:
         node.kubernetes.io/instance-type: {{ $deployment.instanceType }}

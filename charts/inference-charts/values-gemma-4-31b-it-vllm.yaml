@@ -1,0 +1,106 @@
+# Gemma 4 31B instruction-tuned (https://huggingface.co/google/gemma-4-31B-it) used as a decision model,
+# served by stock vLLM on one NVIDIA GPU in the g7e instance family, with Bottlerocket nodes.
+#
+# The pod starts from the pinned vLLM 0.32 CUDA 13 image for G7e Blackwell GPUs and runs `vllm serve`
+# with raw logprobs, so callers can read option probabilities. The OpenAI-compatible API is under /v1.
+model: google/gemma-4-31B-it
+
+# Rendered as `vllm serve` flags (camelCase -> --kebab-case; true renders a bare flag).
+modelParameters:
+  servedModelName: google/gemma-4-31B-it
+  dtype: bfloat16
+  maxModelLen: 32768
+  gpuMemoryUtilization: 0.90
+  tensorParallelSize: 1
+  maxNumSeqs: 4
+  logprobsMode: raw_logprobs
+  enablePrefixCaching: true
+  # Single-quoted inside the value because the flags are passed through bash.
+  limitMmPerPrompt: "'{\"image\": 4, \"audio\": 0}'"
+
+extraLabels:
+  app.kubernetes.io/name: gemma-4-31b-it
+  app.kubernetes.io/part-of: decision-models
+  app.kubernetes.io/version: "vllm-0.32.0"
+
+decisionModel:
+  revision: 842da3794eaa0b77d5f08bae87a17459d91ff475
+  containerPort: 8000
+  modelCacheSize: 250Gi
+  hostDriverLibs:
+    enabled: true
+    mountDir: /usr/local/cuda-13.0/compat
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 180
+
+inference:
+  serviceName: gemma-4-31b-it-vllm
+  serviceNamespace: default
+  accelerator: gpu
+  framework: decision-vllm
+
+  modelServer:
+    image:
+      repository: vllm/vllm-openai
+      tag: v0.32.0@sha256:6ee133356d49ed24cee03dd0cda3d3980279a11c107ce3e752c89e76540f41c9
+    deployment:
+      replicas: 1
+      runtimeClassName: nvidia
+      sharedMemory: 16Gi
+      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
+      # and the observability pod annotations come from the chart's decision-model defaults.
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: karpenter.k8s.aws/instance-family
+                  operator: In
+                  values:
+                    - g7e
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+            - matchExpressions:
+                - key: eks.amazonaws.com/instance-family
+                  operator: In
+                  values:
+                    - g7e
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        gpu:
+          requests:
+            cpu: "12"
+            memory: 96Gi
+            ephemeral-storage: 80Gi
+            nvidia.com/gpu: 1
+          limits:
+            memory: 160Gi
+            ephemeral-storage: 300Gi
+            nvidia.com/gpu: 1
+    env:
+      VLLM_LOGGING_LEVEL: INFO
+      # hostDriverLibs prepends /usr/local/cuda-13.0/compat at startup.
+      LD_LIBRARY_PATH: /usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/cuda/lib64

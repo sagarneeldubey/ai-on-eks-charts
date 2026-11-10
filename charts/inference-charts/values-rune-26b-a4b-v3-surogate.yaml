@@ -1,0 +1,103 @@
+# Rune 26B-A4B v3 decision model (https://huggingface.co/surogate/rune-26b-a4b-GGUF) served by the
+# Surogate server on one NVIDIA GPU in the g7e instance family, with Bottlerocket nodes.
+#
+# Despite its legacy GGUF name, the pinned revision of the repository holds Rune v3 BF16 safetensors.
+#
+# Prerequisite: the repository is gated. Accept its terms on Hugging Face with the account whose token
+# is in the hf-token secret, in the release namespace:
+#   kubectl create secret generic hf-token --from-literal=token=<hf-token>
+model: surogate/rune-26b-a4b-GGUF
+
+# Rendered as `surogate serve` flags (camelCase -> --kebab-case; true renders a bare flag).
+modelParameters:
+  servedModelName: rune-26b-a4b-v3
+  maxModelLen: 32768
+  maxNumSeqs: 8
+  kvCapacity: auto
+  decisionTemperature: 2
+  vision: true
+
+extraLabels:
+  app.kubernetes.io/name: rune-26b-a4b-v3
+  app.kubernetes.io/part-of: decision-models
+  app.kubernetes.io/version: "surogate-1.5.12"
+
+decisionModel:
+  revision: c6b360d47895bb77bdf3805a13ee5a5557ab1921
+  containerPort: 8000
+  modelCacheSize: 350Gi
+  hostDriverLibs:
+    enabled: true
+    mountDir: /usr/local/lib
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 180
+
+inference:
+  serviceName: rune-26b-a4b-v3-surogate
+  serviceNamespace: default
+  accelerator: gpu
+  framework: surogate
+
+  modelServer:
+    image:
+      repository: ghcr.io/invergent-ai/surogate
+      tag: 1.5.12@sha256:7751113d67e3773a1d7b47a57299924e0067a28ceb407ba84b0880e6368da709
+    deployment:
+      replicas: 1
+      runtimeClassName: nvidia
+      sharedMemory: 16Gi
+      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
+      # and the observability pod annotations come from the chart's decision-model defaults.
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: karpenter.k8s.aws/instance-family
+                  operator: In
+                  values:
+                    - g7e
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+            - matchExpressions:
+                - key: eks.amazonaws.com/instance-family
+                  operator: In
+                  values:
+                    - g7e
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        gpu:
+          requests:
+            cpu: "6"
+            memory: 48Gi
+            ephemeral-storage: 120Gi
+            nvidia.com/gpu: 1
+          limits:
+            memory: 60Gi
+            ephemeral-storage: 400Gi
+            nvidia.com/gpu: 1
+    env:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

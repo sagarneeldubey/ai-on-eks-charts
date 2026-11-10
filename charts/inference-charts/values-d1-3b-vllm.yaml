@@ -1,0 +1,118 @@
+# LiquidAI d1-3B decision model (https://huggingface.co/LiquidAI/d1-3B) served by stock vLLM on one
+# NVIDIA GPU in the g5 instance family (on-demand), with Bottlerocket nodes.
+#
+# The CUDA 12.9 vLLM image contains the GPU-native vLLM extension needed by the A10G. The OpenAI-compatible
+# API is under /v1.
+model: LiquidAI/d1-3B
+
+# Rendered as `vllm serve` flags (camelCase -> --kebab-case; true renders a bare flag).
+modelParameters:
+  servedModelName: LiquidAI/d1-3B
+  dtype: bfloat16
+  maxModelLen: 8192
+  gpuMemoryUtilization: 0.90
+  tensorParallelSize: 1
+  logprobsMode: raw_logprobs
+  enablePrefixCaching: true
+
+extraLabels:
+  app.kubernetes.io/name: d1-3b
+  app.kubernetes.io/part-of: decision-models
+  app.kubernetes.io/version: "vllm-0.32.0"
+
+decisionModel:
+  revision: 051bcc464b01b9f92942b364d9586b0ef5912432
+  containerPort: 8000
+  modelCacheSize: 100Gi
+  # vLLM 0.32's guard around the optional TorchCodec audio import catches ImportError and RuntimeError
+  # but not OSError. Widen it until a stable vLLM release ships the upstream fix (present in
+  # v0.33.0rc3), and fail fast if the patch no longer applies.
+  preStartScript: |
+    audio_module=/usr/local/lib/python3.12/dist-packages/vllm/multimodal/media/audio.py
+    sed -i 's/except (ImportError, RuntimeError) as exc:/except (ImportError, RuntimeError, OSError) as exc:/' "${audio_module}"
+    grep -q 'except (ImportError, RuntimeError, OSError) as exc:' "${audio_module}"
+  hostDriverLibs:
+    enabled: true
+    mountDir: /usr/local/cuda-12.9/compat
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 180
+
+inference:
+  serviceName: d1-3b-vllm
+  serviceNamespace: default
+  accelerator: gpu
+  framework: decision-vllm
+
+  modelServer:
+    image:
+      repository: vllm/vllm-openai
+      tag: v0.32.0-cu129@sha256:bc0445dac61accbf1c3b17fbb524a71eee0b1b32f55ba45952095e3be8991c3f
+    deployment:
+      replicas: 1
+      runtimeClassName: nvidia
+      sharedMemory: 4Gi
+      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
+      # and the observability pod annotations come from the chart's decision-model defaults.
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: karpenter.k8s.aws/instance-family
+                  operator: In
+                  values:
+                    - g5
+                - key: karpenter.sh/capacity-type
+                  operator: In
+                  values:
+                    - on-demand
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+            - matchExpressions:
+                - key: eks.amazonaws.com/instance-family
+                  operator: In
+                  values:
+                    - g5
+                - key: karpenter.sh/capacity-type
+                  operator: In
+                  values:
+                    - on-demand
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        gpu:
+          requests:
+            cpu: "4"
+            memory: 16Gi
+            ephemeral-storage: 10Gi
+            nvidia.com/gpu: 1
+          limits:
+            memory: 24Gi
+            ephemeral-storage: 100Gi
+            nvidia.com/gpu: 1
+    env:
+      VLLM_LOGGING_LEVEL: INFO
+      # hostDriverLibs prepends /usr/local/cuda-12.9/compat at startup.
+      LD_LIBRARY_PATH: /usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/cuda/lib64

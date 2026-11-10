@@ -1,0 +1,105 @@
+# Decider 35B-A3B NVFP4 decision model (https://huggingface.co/Mapika/decider-35b-a3b-nvfp4)
+# served by the decider vLLM server on one NVIDIA GPU in the g7e instance family, with Bottlerocket nodes.
+#
+# The checkpoint was validated by its author with vLLM 0.29 on Blackwell, so the pod starts from the
+# pinned vLLM 0.29 CUDA 13 image, installs the decider-ai server without dependencies (vLLM provides
+# them) and runs `uvicorn decider.serve_vllm:app`. The server takes its settings from DECIDER_* env vars
+# and loads DECIDER_MODEL through vLLM; it has no revision setting, so the default branch is served.
+model: Mapika/decider-35b-a3b-nvfp4
+
+extraLabels:
+  app.kubernetes.io/name: decider-35b-a3b-nvfp4
+  app.kubernetes.io/part-of: decision-models
+  app.kubernetes.io/version: "vllm-0.29.0"
+
+decisionModel:
+  containerPort: 8000
+  modelCacheSize: 200Gi
+  pipInstalls:
+    - packages:
+        - --no-deps
+        - "--only-binary=:all:"
+        - decider-ai==1.10.0
+  hostDriverLibs:
+    enabled: true
+    mountDir: /usr/local/cuda-13.0/compat
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 180
+
+inference:
+  serviceName: decider-35b-a3b-nvfp4
+  serviceNamespace: default
+  accelerator: gpu
+  framework: decider
+
+  modelServer:
+    image:
+      repository: vllm/vllm-openai
+      tag: v0.29.0@sha256:082ca6f035279109041ffd3fe0695cb568b29bc580b35c4f297a66a08b216c1b
+    deployment:
+      replicas: 1
+      runtimeClassName: nvidia
+      sharedMemory: 8Gi
+      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
+      # and the observability pod annotations come from the chart's decision-model defaults.
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: karpenter.k8s.aws/instance-family
+                  operator: In
+                  values:
+                    - g7e
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+            - matchExpressions:
+                - key: eks.amazonaws.com/instance-family
+                  operator: In
+                  values:
+                    - g7e
+                - key: kubernetes.io/arch
+                  operator: In
+                  values:
+                    - amd64
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        gpu:
+          requests:
+            cpu: "6"
+            memory: 48Gi
+            ephemeral-storage: 40Gi
+            nvidia.com/gpu: 1
+          limits:
+            memory: 60Gi
+            ephemeral-storage: 200Gi
+            nvidia.com/gpu: 1
+    env:
+      DECIDER_MODEL: Mapika/decider-35b-a3b-nvfp4
+      DECIDER_MAX_STATE_TOKENS: "32768"
+      DECIDER_VLLM_MAX_MODEL_LEN: "34816"
+      DECIDER_VLLM_GPU_MEMORY_UTILIZATION: "0.90"
+      DECIDER_VLLM_MAX_NUM_SEQS: "32"
+      DECIDER_VLLM_MAX_BATCHED_TOKENS: "16384"
+      DECIDER_VLLM_WIDE_LOGPROBS: "1"
+      # hostDriverLibs prepends /usr/local/cuda-13.0/compat at startup.
+      LD_LIBRARY_PATH: /usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/cuda/lib64

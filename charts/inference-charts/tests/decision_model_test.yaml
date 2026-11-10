@@ -65,6 +65,52 @@ tests:
           path: spec.template.spec.containers[0].name
           value: strands-decider
 
+  - it: downloads the checkpoint and execs the Surogate server
+    set:
+      inference.framework: surogate
+      decisionModel.revision: abc123
+      modelParameters:
+        maxNumSeqs: 8
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'snapshot_download\(repo_id="org/model", revision="abc123", local_dir="/models/checkpoint"\)'
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'exec surogate serve /models/checkpoint --host 0\.0\.0\.0 --port 8000 --max-num-seqs 8\n?$'
+
+  - it: lets vLLM download the model for the decider server
+    set:
+      inference.framework: decider
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'snapshot_download|--tensor-parallel-size'
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'exec uvicorn decider\.serve_vllm:app --host 0\.0\.0\.0 --port 8000\n?$'
+
+  - it: runs the pre-start script and execs vllm serve at the pinned revision for decision-vllm
+    set:
+      inference.framework: decision-vllm
+      decisionModel.revision: abc123
+      decisionModel.preStartScript: echo patched
+      modelParameters:
+        tensorParallelSize: 1
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: "echo patched\n"
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: snapshot_download
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: "exec vllm serve 'org/model' --revision abc123 --host 0\\.0\\.0\\.0 --port 8000 --tensor-parallel-size 1\n?$"
+
   - it: omits the revision when none is pinned
     documentSelector: {path: kind, value: Deployment}
     asserts:
