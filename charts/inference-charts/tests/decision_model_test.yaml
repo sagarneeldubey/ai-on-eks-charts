@@ -56,7 +56,7 @@ tests:
 
   - it: preserves explicit zero grace and empty tolerations over model values
     values:
-      - ../values-strands-decider-2b.yaml
+      - ../values-decision-strands-decider-2b.yaml
     set:
       inference.modelServer.deployment.terminationGracePeriodSeconds: 0
       inference.modelServer.deployment.tolerations: []
@@ -285,7 +285,7 @@ tests:
 
   - it: requires the Kev API key secret in the Kev values file
     values:
-      - ../values-kev-27b.yaml
+      - ../values-decision-kev-27b.yaml
     documentSelector: {path: kind, value: Deployment}
     asserts:
       - contains:
@@ -303,7 +303,7 @@ tests:
 
   - it: exposes the server only inside the cluster on the chart's service port
     values:
-      - ../values-strands-decider-2b.yaml
+      - ../values-decision-strands-decider-2b.yaml
     documentSelector: {path: kind, value: Service}
     asserts:
       - equal:

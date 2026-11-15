@@ -83,6 +83,10 @@ Each model has its own values file in `charts/inference-charts/`. Key configurat
 - **Scaling**: Replica count and autoscaling settings
 - **Storage**: Model storage and caching configuration
 
+Decision-model presets use the `values-decision-` prefix, for example `values-decision-kev-27b.yaml`
+and `values-decision-d1-3b-vllm.yaml`. See [Decision Models](charts/inference-charts/README.md#decision-models)
+for the naming convention and supported configurations.
+
 Example customization:
 
 ```bash

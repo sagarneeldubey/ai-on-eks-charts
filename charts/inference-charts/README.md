@@ -288,12 +288,18 @@ The chart includes pre-configured values files for the following models:
 
 #### Decision Models
 
-- **d1-3B**: `values-d1-3b-vllm.yaml` (vLLM, g5)
-- **Decider 35B-A3B NVFP4**: `values-decider-35b-a3b-nvfp4.yaml` (Decider, g7e)
-- **Gemma 4 31B**: `values-gemma-4-31b-it-vllm.yaml` (vLLM, g7e)
-- **Kev 27B**: `values-kev-27b.yaml` (Kev, g7e)
-- **Rune 26B-A4B v3**: `values-rune-26b-a4b-v3-surogate.yaml` (Surogate, g7e)
-- **Strands Decider 2B**: `values-strands-decider-2b.yaml` (Strands Decider, g5)
+Decision-model values files use `values-decision-<model>[-<server>].yaml` so they sort together.
+Include the server suffix when it differs from the model family (`-vllm`, `-surogate`); omit it
+when the server matches the family (Kev, Strands Decider, Decider). The `decision-` prefix
+classifies the values file. Use the model/server name without that prefix for
+`inference.serviceName` and the Helm release name.
+
+- **d1-3B**: `values-decision-d1-3b-vllm.yaml` (vLLM, g5)
+- **Decider 35B-A3B NVFP4**: `values-decision-decider-35b-a3b-nvfp4.yaml` (Decider, g7e)
+- **Gemma 4 31B**: `values-decision-gemma-4-31b-it-vllm.yaml` (vLLM, g7e)
+- **Kev 27B**: `values-decision-kev-27b.yaml` (Kev, g7e)
+- **Rune 26B-A4B v3**: `values-decision-rune-26b-a4b-v3-surogate.yaml` (Surogate, g7e)
+- **Strands Decider 2B**: `values-decision-strands-decider-2b.yaml` (Strands Decider, g5)
 
 #### Diffusion Models
 
@@ -840,19 +846,19 @@ Kev requires an API key on every request; the pod does not start until the secre
 ```bash
 kubectl create secret generic kev-api-key --from-literal=api-key=<your-api-key>
 
-helm install kev-27b ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-kev-27b.yaml
+helm install kev-27b ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-kev-27b.yaml
 ```
 
 ### Deploy Strands Decider 2B decision model
 
 ```bash
-helm install strands-decider-2b ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-strands-decider-2b.yaml
+helm install strands-decider-2b ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-strands-decider-2b.yaml
 ```
 
 ### Deploy Decider 35B-A3B decision model
 
 ```bash
-helm install decider-35b-a3b-nvfp4 ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decider-35b-a3b-nvfp4.yaml
+helm install decider-35b-a3b-nvfp4 ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-decider-35b-a3b-nvfp4.yaml
 ```
 
 ### Deploy Rune 26B-A4B v3 decision model
@@ -861,7 +867,7 @@ The model repository is gated; accept its terms on Hugging Face and create the `
 (see [Create Hugging Face Token Secret](#create-hugging-face-token-secret-gated-models-only)).
 
 ```bash
-helm install rune-26b-a4b-v3-surogate ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-rune-26b-a4b-v3-surogate.yaml
+helm install rune-26b-a4b-v3-surogate ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-rune-26b-a4b-v3-surogate.yaml
 ```
 
 ### Deploy Gemma 4 31B and d1-3B decision models
@@ -869,8 +875,8 @@ helm install rune-26b-a4b-v3-surogate ai-on-eks/inference-charts -f https://raw.
 Both are served by vLLM with raw logprobs on the OpenAI-compatible API under `/v1`.
 
 ```bash
-helm install gemma-4-31b-it-vllm ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-gemma-4-31b-it-vllm.yaml
-helm install d1-3b-vllm ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-d1-3b-vllm.yaml
+helm install gemma-4-31b-it-vllm ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-gemma-4-31b-it-vllm.yaml
+helm install d1-3b-vllm ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-d1-3b-vllm.yaml
 ```
 
 ### Deploy Graviton (ARM64 CPU) Models

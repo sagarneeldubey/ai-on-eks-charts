@@ -1,20 +1,21 @@
 ---
 name: inference-values
-description: Author a values-<model>.yaml file for the inference-charts Helm chart. Use when adding a new model (vLLM, Ray-vLLM, LeaderWorkerSet, Triton, AIBrix, NIM, or Neuron) to this repository, including modelParameters conventions, framework selection, GPU sizing, and validation steps.
+description: Author a model values file for the inference-charts Helm chart, including values-decision- presets. Use when adding a new model (vLLM, Ray-vLLM, LeaderWorkerSet, Triton, AIBrix, NIM, Neuron, or a decision server) to this repository, including modelParameters conventions, framework selection, GPU sizing, and validation steps.
 ---
 
 # Add a Model Values File to inference-charts
 
-Every supported model in this repo is one values file: `charts/inference-charts/values-<model>-<framework>.yaml`. Deploying it is `helm install <release> ai-on-eks/inference-charts -f <values-file>`. This skill covers authoring a correct file and validating it before opening a PR.
+Every supported model in this repo has a values file in `charts/inference-charts/`: ordinarily `values-<model>-<framework>.yaml`, or `values-decision-<model>[-<server>].yaml` for decision-model presets. Deploying it is `helm install <release> ai-on-eks/inference-charts -f <values-file>`. This skill covers authoring a correct file and validating it before opening a PR.
 
 ## File Naming
 
-`values-<model-name>-<framework>.yaml`, all kebab-case:
+Use `values-<model-name>-<framework>.yaml` for ordinary model presets and `values-decision-<model-name>[-<server>].yaml` for decision-model presets, all kebab-case:
 
 - Model name: lowercase, dots dropped or kept per existing precedent (`llama-32-1b`, `qwen3-1.7b`, `glm-5-2`), parameter count included when the family has multiple sizes (`llama-3-70b`).
 - Framework suffix: `vllm`, `ray-vllm`, `lws-vllm`, `triton-vllm`, `aibrix`, `diffusers`, `nim-container`, `nim-operator-cache`, `nim-operator-service`. Neuron variants append `-neuron` (`values-llama-31-8b-vllm-neuron.yaml`).
 - S3 staging companions are prefixed `values-s3-copy-` (`values-s3-copy-glm-5-2.yaml`).
-- Decision models drop the suffix when the framework is the model family (`values-kev-27b.yaml`, `values-strands-decider-2b.yaml`, `values-decider-35b-a3b-nvfp4.yaml`); otherwise they keep the server suffix (`values-rune-26b-a4b-v3-surogate.yaml`, `values-d1-3b-vllm.yaml`).
+- Decision models use the `values-decision-` prefix to group their files. Drop the suffix when the server matches the model family (`values-decision-kev-27b.yaml`, `values-decision-strands-decider-2b.yaml`, `values-decision-decider-35b-a3b-nvfp4.yaml`); otherwise keep the server suffix (`values-decision-rune-26b-a4b-v3-surogate.yaml`, `values-decision-gemma-4-31b-it-vllm.yaml`, `values-decision-d1-3b-vllm.yaml`).
+- The `decision-` prefix classifies the file. Use the model/server portion for `inference.serviceName` and the Helm release name, e.g. `kev-27b` or `d1-3b-vllm`.
 
 ## Choose a Framework
 
@@ -97,14 +98,17 @@ For weights over ~100 GB, add a companion `values-s3-copy-<model>.yaml` using th
 ```bash
 cd charts/inference-charts
 
+# Select the filename using the naming rules above, including the decision prefix when applicable.
+values_file="values-<model>-<framework>.yaml"
+
 # 1. Lint
-helm lint . -f values-<model>-<framework>.yaml
+helm lint . -f "$values_file"
 
 # 2. Render and inspect the exact vllm serve command
-helm template test . -f values-<model>-<framework>.yaml | grep -A2 "vllm serve"
+helm template test . -f "$values_file" | grep -A2 "vllm serve"
 
 # 3. Confirm nodeSelector pin rendered
-helm template test . -f values-<model>-<framework>.yaml | grep -A1 nodeSelector
+helm template test . -f "$values_file" | grep -A1 nodeSelector
 ```
 
 Verify in the rendered output:
@@ -114,9 +118,9 @@ Verify in the rendered output:
 - [ ] Parser names valid for the pinned image's vLLM version
 - [ ] `nodeSelector: node.kubernetes.io/instance-type: <instance>` present
 - [ ] GPU requests == limits
-- [ ] `serviceName` kebab-case and matches the file name
+- [ ] `serviceName` is kebab-case and matches the model/server portion of the file name, excluding `values-` or `values-decision-` and `.yaml`
 
-Then update `charts/inference-charts/README.md` — add the model under **Supported Models** in the correct section (Language / Diffusion / NIM / Neuron), alphabetized with the existing entries.
+Then update `charts/inference-charts/README.md` — add the model under **Supported Models** in the correct section (Language / Decision / Diffusion / NIM / Neuron), alphabetized with the existing entries.
 
 ## PR Conventions
 
