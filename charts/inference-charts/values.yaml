@@ -251,7 +251,7 @@ inference:
           port: 8000
       # Optional; rendered when set (vllm deployment; tolerations also apply to nim-container).
       # The kev / strands-decider deployment renders all of these, including the "decision-model only" keys.
-      # When left empty, the decision-model deployment fills in the defaults noted as "decision-model default".
+      # Unset settings use the defaults noted as "decision-model default".
       lifecycle: {} # e.g. {preStop: {exec: {command: ["/bin/sh", "-c", "sleep 15"]}}}
       livenessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 20}
       nodeAffinity: {} # decision-model only; e.g. {requiredDuringSchedulingIgnoredDuringExecution: {nodeSelectorTerms: [...]}}
@@ -264,8 +264,9 @@ inference:
       revisionHistoryLimit: # decision-model only; decision-model default 2
       runtimeClassName: # decision-model only; e.g. nvidia
       strategy: {} # decision-model only; decision-model default {type: Recreate} to free a single-GPU node before the new pod starts
-      terminationGracePeriodSeconds: # e.g. 300, so in-flight generations finish before SIGKILL; decision-model default 120
-      tolerations: [] # e.g. [{key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule"}]; that is the decision-model default
+      terminationGracePeriodSeconds: # decision-model default 120; set 0 for immediate shutdown
+      # Unset/null uses the decision-model GPU toleration; [] explicitly clears tolerations.
+      tolerations: # e.g. [{key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule"}]
     env: {}
 
 s3ModelCopy:
