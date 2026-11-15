@@ -196,7 +196,7 @@ The following table lists the configurable parameters of the inference-charts ch
 | `inference.modelServer.deployment.livenessProbe`                         | Liveness probe for vLLM or llama.cpp (llama.cpp defaults to `/health`)              | `{}`                                                                        |
 | `inference.modelServer.deployment.readinessProbe`                        | Readiness probe for vLLM or llama.cpp (llama.cpp defaults to `/health`)             | `{}`                                                                        |
 | `inference.modelServer.deployment.terminationGracePeriodSeconds`         | Termination grace period for the vLLM and decision-model pods                       | Not set (decision models: `120`)                                            |
-| `inference.modelServer.deployment.tolerations`                           | Pod tolerations (vLLM, llama.cpp, decision models, and NIM container)               | `[]` (decision models: `nvidia.com/gpu` Exists NoSchedule)                  |
+| `inference.modelServer.deployment.tolerations`                           | Pod tolerations (vLLM, llama.cpp, decision models, and NIM container); `[]` clears tolerations | Not set (decision models: `nvidia.com/gpu` Exists NoSchedule)         |
 | `inference.modelServer.deployment.nodeAffinity`                          | Pod node affinity (decision models)                                                 | `{}`                                                                        |
 | `inference.modelServer.deployment.podAnnotations`                        | Extra pod annotations, merged over the defaults (decision models)                   | CloudWatch/OpenTelemetry auto-instrumentation off; Prometheus scrape on `decisionModel.containerPort` at `/metrics` |
 | `inference.modelServer.deployment.runtimeClassName`                      | Pod runtime class, e.g. `nvidia` (decision models)                                  | Not set                                                                     |
@@ -541,6 +541,9 @@ Notes:
 
 - GPU only. Startup can take up to 30 minutes, so the startup probe allows 180 × 10s and the example values
   set `progressDeadlineSeconds: 1800`.
+- Unset or `null` deployment settings use a 120-second termination grace period and the `nvidia.com/gpu`
+  `Exists` `NoSchedule` toleration. Set `inference.modelServer.deployment.terminationGracePeriodSeconds: 0`
+  for immediate shutdown or `inference.modelServer.deployment.tolerations: []` to clear tolerations.
 - Probes default to TCP checks on the `http` port; override them for servers with a health endpoint.
 - The pod runs with `automountServiceAccountToken: false`, the `RuntimeDefault` seccomp profile, no privilege
   escalation, and all capabilities dropped.

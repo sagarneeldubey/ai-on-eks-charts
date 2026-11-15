@@ -8,8 +8,12 @@
 {{- $strategy := $deployment.strategy | default (dict "type" "Recreate") }}
 {{- $progressDeadlineSeconds := $deployment.progressDeadlineSeconds | default 1800 }}
 {{- $revisionHistoryLimit := ternary 2 $deployment.revisionHistoryLimit (kindIs "invalid" $deployment.revisionHistoryLimit) }}
-{{- $terminationGracePeriodSeconds := $deployment.terminationGracePeriodSeconds | default 120 }}
-{{- $tolerations := $deployment.tolerations | default (list (dict "key" "nvidia.com/gpu" "operator" "Exists" "effect" "NoSchedule")) }}
+{{- /* Only unset/null values use these defaults; 0 and [] are explicit overrides. */}}
+{{- $terminationGracePeriodSeconds := ternary 120 $deployment.terminationGracePeriodSeconds (kindIs "invalid" $deployment.terminationGracePeriodSeconds) }}
+{{- $tolerations := $deployment.tolerations }}
+{{- if kindIs "invalid" $tolerations }}
+{{- $tolerations = list (dict "key" "nvidia.com/gpu" "operator" "Exists" "effect" "NoSchedule") }}
+{{- end }}
 {{- /* CloudWatch Application Signals and OpenTelemetry auto-instrumentation can override the
        pip-installed model dependencies, so they are switched off; Prometheus scrapes the server port. */}}
 {{- $defaultPodAnnotations := dict

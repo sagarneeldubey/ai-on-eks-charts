@@ -20,6 +20,82 @@ tests:
       - failedTemplate:
           errorMessage: "inference.framework kev requires inference.accelerator: gpu"
 
+  - it: uses shared deployment defaults when settings are unset
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - equal:
+          path: spec.progressDeadlineSeconds
+          value: 1800
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 2
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 120
+      - equal:
+          path: spec.template.spec.tolerations
+          value:
+            - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+
+  - it: uses shared defaults when grace period and tolerations are null
+    set:
+      inference.modelServer.deployment.terminationGracePeriodSeconds: null
+      inference.modelServer.deployment.tolerations: null
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 120
+      - equal:
+          path: spec.template.spec.tolerations
+          value:
+            - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+
+  - it: preserves explicit zero grace and empty tolerations over model values
+    values:
+      - ../values-strands-decider-2b.yaml
+    set:
+      inference.modelServer.deployment.terminationGracePeriodSeconds: 0
+      inference.modelServer.deployment.tolerations: []
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 0
+      - equal:
+          path: spec.template.spec.tolerations
+          value: []
+
+  - it: preserves custom deployment defaults and zero revision history
+    set:
+      inference.modelServer.deployment.strategy: {type: RollingUpdate}
+      inference.modelServer.deployment.progressDeadlineSeconds: 900
+      inference.modelServer.deployment.revisionHistoryLimit: 0
+      inference.modelServer.deployment.terminationGracePeriodSeconds: 5
+      inference.modelServer.deployment.tolerations:
+        - {key: custom-gpu, operator: Exists, effect: NoSchedule}
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.progressDeadlineSeconds
+          value: 900
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 0
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 5
+      - equal:
+          path: spec.template.spec.tolerations
+          value:
+            - {key: custom-gpu, operator: Exists, effect: NoSchedule}
+
   - it: installs pinned packages, downloads the pinned revision, and execs the Kev server
     set:
       decisionModel.revision: abc123
