@@ -545,6 +545,9 @@ The pod runs these steps:
 
 Notes:
 
+- The d1-3B, Gemma 4 31B and Decider 35B-A3B presets use the digest-pinned
+  `vllm/vllm-openai:v0.33.0` image (CUDA 13). With the Bottlerocket host driver mounts, nodes need
+  [CUDA 13-compatible NVIDIA drivers (R580 or newer)](https://docs.nvidia.com/deploy/cuda-compatibility/595/minor-version-compatibility.html).
 - GPU only. Startup can take up to 30 minutes, so the startup probe allows 180 × 10s and the example values
   set `progressDeadlineSeconds: 1800`.
 - Unset or `null` deployment settings use a 120-second termination grace period and the `nvidia.com/gpu`

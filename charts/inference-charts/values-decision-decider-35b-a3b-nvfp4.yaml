@@ -1,16 +1,16 @@
 # Decider 35B-A3B NVFP4 decision model (https://huggingface.co/Mapika/decider-35b-a3b-nvfp4)
 # served by the decider vLLM server on one NVIDIA GPU in the g7e instance family, with Bottlerocket nodes.
 #
-# The checkpoint was validated by its author with vLLM 0.29 on Blackwell, so the pod starts from the
-# pinned vLLM 0.29 CUDA 13 image, installs the decider-ai server without dependencies (vLLM provides
-# them) and runs `uvicorn decider.serve_vllm:app`. The server takes its settings from DECIDER_* env vars
+# The pod starts from the pinned vLLM 0.33 CUDA 13 image, installs the decider-ai server without
+# dependencies (vLLM provides them) and runs `uvicorn decider.serve_vllm:app`.
+# The server takes its settings from DECIDER_* env vars
 # and loads DECIDER_MODEL through vLLM; it has no revision setting, so the default branch is served.
 model: Mapika/decider-35b-a3b-nvfp4
 
 extraLabels:
   app.kubernetes.io/name: decider-35b-a3b-nvfp4
   app.kubernetes.io/part-of: decision-models
-  app.kubernetes.io/version: "vllm-0.29.0"
+  app.kubernetes.io/version: "vllm-0.33.0"
 
 decisionModel:
   containerPort: 8000
@@ -40,7 +40,7 @@ inference:
   modelServer:
     image:
       repository: vllm/vllm-openai
-      tag: v0.29.0@sha256:082ca6f035279109041ffd3fe0695cb568b29bc580b35c4f297a66a08b216c1b
+      tag: v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     deployment:
       replicas: 1
       runtimeClassName: nvidia

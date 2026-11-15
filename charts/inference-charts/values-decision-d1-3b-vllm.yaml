@@ -1,8 +1,8 @@
 # LiquidAI d1-3B decision model (https://huggingface.co/LiquidAI/d1-3B) served by stock vLLM on one
 # NVIDIA GPU in the g5 instance family (on-demand), with Bottlerocket nodes.
 #
-# The CUDA 12.9 vLLM image contains the GPU-native vLLM extension needed by the A10G. The OpenAI-compatible
-# API is under /v1.
+# The pinned vLLM 0.33 CUDA 13 image includes the A10G GPU target. Bottlerocket nodes need a
+# CUDA 13-compatible NVIDIA driver (R580 or newer) for the host driver mounts. The API is under /v1.
 model: LiquidAI/d1-3B
 
 # Rendered as `vllm serve` flags (camelCase -> --kebab-case; true renders a bare flag).
@@ -18,22 +18,15 @@ modelParameters:
 extraLabels:
   app.kubernetes.io/name: d1-3b
   app.kubernetes.io/part-of: decision-models
-  app.kubernetes.io/version: "vllm-0.32.0"
+  app.kubernetes.io/version: "vllm-0.33.0"
 
 decisionModel:
   revision: 051bcc464b01b9f92942b364d9586b0ef5912432
   containerPort: 8000
   modelCacheSize: 100Gi
-  # vLLM 0.32's guard around the optional TorchCodec audio import catches ImportError and RuntimeError
-  # but not OSError. Widen it until a stable vLLM release ships the upstream fix (present in
-  # v0.33.0rc3), and fail fast if the patch no longer applies.
-  preStartScript: |
-    audio_module=/usr/local/lib/python3.12/dist-packages/vllm/multimodal/media/audio.py
-    sed -i 's/except (ImportError, RuntimeError) as exc:/except (ImportError, RuntimeError, OSError) as exc:/' "${audio_module}"
-    grep -q 'except (ImportError, RuntimeError, OSError) as exc:' "${audio_module}"
   hostDriverLibs:
     enabled: true
-    mountDir: /usr/local/cuda-12.9/compat
+    mountDir: /usr/local/cuda-13.0/compat
   startupProbe:
     httpGet:
       path: /health
@@ -51,7 +44,7 @@ inference:
   modelServer:
     image:
       repository: vllm/vllm-openai
-      tag: v0.32.0-cu129@sha256:bc0445dac61accbf1c3b17fbb524a71eee0b1b32f55ba45952095e3be8991c3f
+      tag: v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     deployment:
       replicas: 1
       runtimeClassName: nvidia
@@ -114,5 +107,5 @@ inference:
             nvidia.com/gpu: 1
     env:
       VLLM_LOGGING_LEVEL: INFO
-      # hostDriverLibs prepends /usr/local/cuda-12.9/compat at startup.
+      # hostDriverLibs prepends /usr/local/cuda-13.0/compat at startup.
       LD_LIBRARY_PATH: /usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/cuda/lib64

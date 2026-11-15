@@ -1,7 +1,7 @@
 # Gemma 4 31B instruction-tuned (https://huggingface.co/google/gemma-4-31B-it) used as a decision model,
 # served by stock vLLM on one NVIDIA GPU in the g7e instance family, with Bottlerocket nodes.
 #
-# The pod starts from the pinned vLLM 0.32 CUDA 13 image for G7e Blackwell GPUs and runs `vllm serve`
+# The pod starts from the pinned vLLM 0.33 CUDA 13 image for G7e Blackwell GPUs and runs `vllm serve`
 # with raw logprobs, so callers can read option probabilities. The OpenAI-compatible API is under /v1.
 model: google/gemma-4-31B-it
 
@@ -21,7 +21,7 @@ modelParameters:
 extraLabels:
   app.kubernetes.io/name: gemma-4-31b-it
   app.kubernetes.io/part-of: decision-models
-  app.kubernetes.io/version: "vllm-0.32.0"
+  app.kubernetes.io/version: "vllm-0.33.0"
 
 decisionModel:
   revision: 842da3794eaa0b77d5f08bae87a17459d91ff475
@@ -47,7 +47,7 @@ inference:
   modelServer:
     image:
       repository: vllm/vllm-openai
-      tag: v0.32.0@sha256:6ee133356d49ed24cee03dd0cda3d3980279a11c107ce3e752c89e76540f41c9
+      tag: v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     deployment:
       replicas: 1
       runtimeClassName: nvidia
