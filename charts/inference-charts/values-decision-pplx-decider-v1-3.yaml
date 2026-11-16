@@ -57,7 +57,8 @@ inference:
   modelServer:
     image:
       repository: python
-      tag: 3.12-slim-bookworm@sha256:57d96f71de145a98e7ceca18ee4ade77bba4103a33a72dfaea026b23625c6bf0
+      # The full image includes the compiler and headers required by Triton.
+      tag: 3.12-bookworm@sha256:4209fae09a3e20afd863e528bfddc235da5fd5977983e1996cd54cc9a72e6267
     deployment:
       replicas: 1
       runtimeClassName: nvidia

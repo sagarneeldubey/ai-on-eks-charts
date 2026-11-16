@@ -576,6 +576,8 @@ The `pplx-decider` framework loads the native library from the pinned Hugging Fa
 `POST /v1/systemone` and `GET /health`. The health endpoint becomes available after the model loads.
 It preserves the checkpoint's calibrated probabilities and uses the reference inference path with
 `mode: separate`; Locate adapters load on their first extraction request.
+Both presets use the full Python Bookworm image, which includes the compiler and C headers
+Triton needs to compile its CUDA launcher on first inference.
 
 Requests contain `state` and a `questions` map with native `choice`, `noul`, `score` or `locate` questions.
 A JSON array batches requests and returns responses in the same order. Images must be inline base64

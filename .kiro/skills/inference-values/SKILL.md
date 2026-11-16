@@ -95,6 +95,9 @@ specified by the checkpoint's `requirements.txt`. Pin both the model revision an
 The checkpoint includes its own inference source; the chart's HTTP adapter imports that source.
 Use native `modelParameters` (`mode`, `maxLength`, `batchTokens`, `cpuThreads`), without vLLM flags.
 Keep the API cluster-internal and use HTTP `/health` probes. CUDA 13 wheels need an R580-or-newer driver.
+Use the full Python Bookworm image, which includes the compiler and C headers Triton needs on
+first inference. The slim image lacks these dependencies, and runtime `apt` installs cannot
+drop privileges with the chart's default dropped Linux capabilities.
 
 ## Large Models: S3 Model Copy
 

@@ -198,6 +198,9 @@ tests:
       inference.framework: pplx-decider
     documentSelector: {path: kind, value: Deployment}
     asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: '^python:3\.12-bookworm@sha256:'
       - equal:
           path: spec.template.spec.nodeSelector
           value: {node.kubernetes.io/instance-type: g7e.4xlarge}
@@ -221,6 +224,9 @@ tests:
       inference.framework: pplx-decider
     documentSelector: {path: kind, value: Deployment}
     asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: '^python:3\.12-bookworm@sha256:'
       - equal:
           path: spec.template.spec.nodeSelector
           value: {node.kubernetes.io/instance-type: g5.2xlarge}
