@@ -177,7 +177,7 @@ The following table lists the configurable parameters of the inference-charts ch
 |--------------------------------------------------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
 | `global.image.pullPolicy`                                                | Global image pull policy                                                            | `IfNotPresent`                                                              |
 | `inference.accelerator`                                                  | Accelerator type to use (gpu, neuron, or graviton)                                  | `gpu`                                                                       |
-| `inference.framework`                                                    | Framework type to use (vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, strands-decider, surogate, decider, decision-vllm, diffusers, nim-container, or nim-operator) | `vllm`                                                                      |
+| `inference.framework`                                                    | Framework type to use (vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, strands-decider, surogate, decider, decision-vllm, pplx-decider, diffusers, nim-container, or nim-operator) | `vllm`                                                                      |
 | `inference.serviceName`                                                  | Name of the inference service                                                       | `inference`                                                                 |
 | `inference.serviceNamespace`                                             | Namespace for the inference service                                                 | `default`                                                                   |
 | `inference.modelServer.image.repository`                                 | Model server image repository                                                       | `vllm/vllm-openai`                                                          |
@@ -251,7 +251,7 @@ The chart provides configuration for various model parameters:
 | `modelParameters.enablePrefixCaching`       | Enable prefix caching                 | `true`                      |
 | `modelParameters.pipeline`                  | Pipeline type for diffusers framework | Not set                     |
 
-**Note**: Model parameters, including YAML numbers, are converted to command-line arguments in kebab-case (e.g. `maxNumSeqs` becomes `--max-num-seqs`). Boolean `true` emits a flag, `false` omits it. For diffusers deployments, `pipeline` specifies the diffusion pipeline type. For llama.cpp, kev, and strands-decider, no vLLM-only tensor parallel flag is added automatically.
+**Note**: Model parameters, including YAML numbers, are converted to command-line arguments in kebab-case (e.g. `maxNumSeqs` becomes `--max-num-seqs`). Boolean `true` emits a flag, `false` omits it. For diffusers deployments, `pipeline` specifies the diffusion pipeline type. For llama.cpp and the native decision servers (kev, strands-decider, surogate, decider and pplx-decider), no vLLM-only tensor parallel flag is added automatically.
 
 ### Ray GCS High Availability Parameters
 
@@ -290,7 +290,7 @@ The chart includes pre-configured values files for the following models:
 
 Decision-model values files use `values-decision-<model>[-<server>].yaml` so they sort together.
 Include the server suffix when it differs from the model family (`-vllm`, `-surogate`); omit it
-when the server matches the family (Kev, Strands Decider, Decider). The `decision-` prefix
+when the server matches the family (Kev, Strands Decider, Decider, Perplexity Decider). The `decision-` prefix
 classifies the values file. Use the model/server name without that prefix for
 `inference.serviceName` and the Helm release name.
 
@@ -298,6 +298,8 @@ classifies the values file. Use the model/server name without that prefix for
 - **Decider 35B-A3B NVFP4**: `values-decision-decider-35b-a3b-nvfp4.yaml` (Decider, g7e)
 - **Gemma 4 31B**: `values-decision-gemma-4-31b-it-vllm.yaml` (vLLM, g7e)
 - **Kev 27B**: `values-decision-kev-27b.yaml` (Kev, g7e)
+- **Perplexity Decider Flash v1.3 (4B)**: `values-decision-pplx-decider-flash-v1-3.yaml` (native Perplexity, g5.2xlarge)
+- **Perplexity Decider v1.3 (27B)**: `values-decision-pplx-decider-v1-3.yaml` (native Perplexity, g7e.4xlarge)
 - **Rune 26B-A4B v3**: `values-decision-rune-26b-a4b-v3-surogate.yaml` (Surogate, g7e)
 - **Strands Decider 2B**: `values-decision-strands-decider-2b.yaml` (Strands Decider, g5)
 
@@ -533,12 +535,13 @@ These frameworks serve decision models from a CUDA/Python base image:
 | `surogate`        | `surogate serve /models/checkpoint`            | Chart, into `/models/checkpoint` |
 | `decider`         | `uvicorn decider.serve_vllm:app` (`DECIDER_*` env) | vLLM                        |
 | `decision-vllm`   | `vllm serve <model> --revision <revision>`     | vLLM                            |
+| `pplx-decider`    | Chart HTTP adapter using native `pplx_decider.Decider` | Chart, into `/models/checkpoint` |
 
 The pod runs these steps:
 
 1. Runs `decisionModel.preStartScript`, if set.
 2. Runs each `decisionModel.pipInstalls` step in order (pin every package).
-3. For `kev`, `strands-decider` and `surogate`, downloads `model` at `decisionModel.revision` from Hugging Face
+3. For `kev`, `strands-decider`, `surogate` and `pplx-decider`, downloads `model` at `decisionModel.revision` from Hugging Face
    into `/models/checkpoint`.
 4. Fails fast if CUDA is unavailable.
 5. Execs the server, with `modelParameters` as flags.
@@ -548,6 +551,7 @@ Notes:
 - The d1-3B, Gemma 4 31B and Decider 35B-A3B presets use the digest-pinned
   `vllm/vllm-openai:v0.33.0` image (CUDA 13). With the Bottlerocket host driver mounts, nodes need
   [CUDA 13-compatible NVIDIA drivers (R580 or newer)](https://docs.nvidia.com/deploy/cuda-compatibility/595/minor-version-compatibility.html).
+- The Perplexity Decider presets use pinned CUDA 13 PyTorch wheels and require the same R580-or-newer drivers.
 - GPU only. Startup can take up to 30 minutes, so the startup probe allows 180 × 10s and the example values
   set `progressDeadlineSeconds: 1800`.
 - Unset or `null` deployment settings use a 120-second termination grace period and the `nvidia.com/gpu`
@@ -564,6 +568,23 @@ Notes:
   instance family via both Karpenter and EKS Auto Mode node labels.
 - The Service is `ClusterIP`. Kev enforces its API key (`kev-api-key` secret); the other servers have no
   built-in authentication, so keep them cluster-internal.
+
+### Native Perplexity Decider API
+
+The Perplexity v1.3 checkpoints include a separate decision readout head and use noncausal full attention.
+The `pplx-decider` framework loads the native library from the pinned Hugging Face snapshot and exposes
+`POST /v1/systemone` and `GET /health`. The health endpoint becomes available after the model loads.
+It preserves the checkpoint's calibrated probabilities and uses the reference inference path with
+`mode: separate`; Locate adapters load on their first extraction request.
+
+Requests contain `state` and a `questions` map with native `choice`, `noul`, `score` or `locate` questions.
+A JSON array batches requests and returns responses in the same order. Images must be inline base64
+`data:image/...` URLs; HTTP callers cannot supply filesystem paths. Locate accepts text-only requests
+without images. The adapter returns HTTP 422 for native request/length errors and malformed inline images.
+
+Both presets start with `maxLength: 8192` and `batchTokens: 8192` to bound working memory. Override
+these native server parameters for longer inputs after checking GPU memory headroom. The 27B model
+has about 49 GiB of BF16 weights and uses one G7e GPU; Flash has about 8.5 GiB and uses one G5 GPU.
 
 ## S3 Model Copy
 
@@ -856,6 +877,29 @@ helm install kev-27b ai-on-eks/inference-charts -f https://raw.githubusercontent
 
 ```bash
 helm install strands-decider-2b ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-strands-decider-2b.yaml
+```
+
+### Deploy Perplexity Decider v1.3 and Flash v1.3 decision models
+
+The presets require Bottlerocket nodes with the NVIDIA RuntimeClass and an R580-or-newer driver.
+If Hugging Face requires access credentials, create the `hf-token` secret first
+(see [Create Hugging Face Token Secret](#create-hugging-face-token-secret-gated-models-only)).
+
+```bash
+helm install pplx-decider-v1-3 ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-pplx-decider-v1-3.yaml
+helm install pplx-decider-flash-v1-3 ai-on-eks/inference-charts -f https://raw.githubusercontent.com/awslabs/ai-on-eks-charts/refs/heads/main/charts/inference-charts/values-decision-pplx-decider-flash-v1-3.yaml
+```
+
+For local access, forward one service to loopback and make a decision request:
+
+```bash
+kubectl port-forward --address 127.0.0.1 svc/pplx-decider-flash-v1-3 8000:8000
+```
+
+```bash
+curl http://localhost:8000/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{"state":"The traffic light is red.","questions":{"color":{"type":"choice","instructions":"What color is the light?","criteria":{"red":null,"blue":null}}}}'
 ```
 
 ### Deploy Decider 35B-A3B decision model

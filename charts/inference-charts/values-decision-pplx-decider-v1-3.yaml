@@ -1,0 +1,110 @@
+# Perplexity Decider v1.3 (27B), served by the native pplx_decider library on a
+# G7e Blackwell GPU with Bottlerocket. The BF16 weights occupy about 49 GiB.
+# https://huggingface.co/perplexity-ai/pplx-decider-v1.3
+#
+# The checkpoint has noncausal attention and a separate decision readout head.
+# Use the chart's native HTTP adapter, which preserves the v1.3 decision protocol.
+# CUDA 13 wheels require an NVIDIA R580 or newer host driver.
+model: perplexity-ai/pplx-decider-v1.3
+
+# Native adapter flags (camelCase -> --kebab-case). Keep the reference path and
+# separate-question mode so calibrated decisions and Locate retain their semantics.
+modelParameters:
+  device: cuda
+  mode: separate
+  maxLength: 8192
+  batchTokens: 8192
+  cpuThreads: 8
+
+extraLabels:
+  app.kubernetes.io/name: pplx-decider-v1-3
+  app.kubernetes.io/part-of: decision-models
+  app.kubernetes.io/version: "pplx-decider-0.5.0"
+
+decisionModel:
+  revision: 9c2ebb27470d3dec2ad7ab727727e40d142c7213
+  containerPort: 8000
+  modelCacheSize: 150Gi
+  pipInstalls:
+    - indexUrl: https://download.pytorch.org/whl/cu130
+      packages:
+        - torch==2.14.0
+        - torchvision==0.29.0
+    - packages:
+        - transformers==5.17.0
+        - safetensors==0.8.0
+        - pillow==12.3.0
+        - huggingface-hub==1.31.0
+        - fastapi==0.163.1
+        - uvicorn==0.54.0
+  hostDriverLibs:
+    enabled: true
+    mountDir: /usr/local/lib
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 180
+
+inference:
+  serviceName: pplx-decider-v1-3
+  serviceNamespace: default
+  accelerator: gpu
+  framework: pplx-decider
+
+  modelServer:
+    image:
+      repository: python
+      tag: 3.12-slim-bookworm@sha256:57d96f71de145a98e7ceca18ee4ade77bba4103a33a72dfaea026b23625c6bf0
+    deployment:
+      replicas: 1
+      runtimeClassName: nvidia
+      instanceType: g7e.4xlarge
+      sharedMemory: 8Gi
+      # The adapter has no /metrics endpoint.
+      podAnnotations:
+        prometheus.io/scrape: "false"
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: karpenter.k8s.aws/instance-family
+                  operator: In
+                  values: [g7e]
+                - key: kubernetes.io/arch
+                  operator: In
+                  values: [amd64]
+            - matchExpressions:
+                - key: eks.amazonaws.com/instance-family
+                  operator: In
+                  values: [g7e]
+                - key: kubernetes.io/arch
+                  operator: In
+                  values: [amd64]
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: http
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+      resources:
+        gpu:
+          requests:
+            cpu: "8"
+            memory: 80Gi
+            ephemeral-storage: 80Gi
+            nvidia.com/gpu: 1
+          limits:
+            memory: 112Gi
+            ephemeral-storage: 180Gi
+            nvidia.com/gpu: 1

@@ -168,6 +168,72 @@ tests:
           path: spec.template.spec.containers[0].args[0]
           pattern: 'exec uvicorn decider\.serve_vllm:app --host 0\.0\.0\.0 --port 8000\n?$'
 
+  - it: downloads the pinned Perplexity snapshot and starts its native HTTP adapter
+    set:
+      inference.framework: pplx-decider
+      decisionModel.revision: abc123
+      modelParameters:
+        mode: separate
+        maxLength: 8192
+        batchTokens: 8192
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'snapshot_download\(repo_id="org/model", revision="abc123", local_dir="/models/checkpoint"\)'
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'from pplx_decider import Decider, LengthError, RequestError'
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: "exec python3 /tmp/pplx-decider-server\\.py --checkpoint /models/checkpoint --model-name 'org/model' --host 0\\.0\\.0\\.0 --port 8000 --batch-tokens 8192 --max-length 8192 --mode separate\n?$"
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: '--tensor-parallel-size|exec vllm serve'
+
+  - it: pins the Perplexity 27B preset to a G7e GPU with HTTP probes
+    values:
+      - ../values-decision-pplx-decider-v1-3.yaml
+    set:
+      inference.framework: pplx-decider
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value: {node.kubernetes.io/instance-type: g7e.4xlarge}
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests["nvidia.com/gpu"]
+          value: 1
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]
+          value: 1
+      - equal:
+          path: spec.template.metadata.annotations["prometheus.io/scrape"]
+          value: "false"
+
+  - it: pins the Perplexity Flash preset to a G5 GPU with HTTP probes
+    values:
+      - ../values-decision-pplx-decider-flash-v1-3.yaml
+    set:
+      inference.framework: pplx-decider
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value: {node.kubernetes.io/instance-type: g5.2xlarge}
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests["nvidia.com/gpu"]
+          value: 1
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]
+          value: 1
+
   - it: runs the pre-start script and execs vllm serve at the pinned revision for decision-vllm
     set:
       inference.framework: decision-vllm

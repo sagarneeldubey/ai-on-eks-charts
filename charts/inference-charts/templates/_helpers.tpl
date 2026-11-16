@@ -86,7 +86,7 @@ app.kubernetes.io/component: {{.Values.inference.serviceName}}
     {{- $args = append $args (printf "--load-format %s" .Values.vllm.loadFormat ) }}
 {{- end}}
 {{- /* llama.cpp and the decision-model servers have no tensor parallel flag. */}}
-{{- if and (not (has .Values.inference.framework (list "llama-cpp" "kev" "strands-decider" "surogate" "decider"))) (not (.Values.modelParameters | default dict).tensorParallelSize) (ne .Values.inference.accelerator "graviton")}}
+{{- if and (not (has .Values.inference.framework (list "llama-cpp" "kev" "strands-decider" "surogate" "decider" "pplx-decider"))) (not (.Values.modelParameters | default dict).tensorParallelSize) (ne .Values.inference.accelerator "graviton")}}
     {{- if eq .Values.inference.accelerator "neuron"}}
         {{- $tpsize = mul (index .Values.inference.modelServer.deployment.resources.neuron.requests "aws.amazon.com/neuron") 2}}
     {{- else }}
@@ -168,7 +168,7 @@ nodeAffinity:
 {{- end -}}
 
 {{/*
-Startup script for the decision-model servers (framework: kev or strands-decider).
+Startup script for the decision-model servers.
 These servers ship as Python packages rather than images, so the pod installs the
 pinned packages, downloads the pinned model snapshot, checks CUDA, then execs the server.
 */}}
@@ -186,7 +186,7 @@ export LD_LIBRARY_PATH="{{ $dm.hostDriverLibs.mountDir }}${LD_LIBRARY_PATH:+:${L
 python3 -m pip install --no-cache-dir{{ with .indexUrl }} --index-url {{ . | squote }}{{ end }}{{ range .packages }} {{ . | squote }}{{ end }}
 {{- end }}
 {{- /* decider and decision-vllm load the model through vLLM, which downloads it itself. */}}
-{{- if has $framework (list "kev" "strands-decider" "surogate") }}
+{{- if has $framework (list "kev" "strands-decider" "surogate" "pplx-decider") }}
 python3 -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="{{ .Values.model }}",{{ with $dm.revision }} revision="{{ . }}",{{ end }} local_dir="/models/checkpoint")'
 {{- end }}
 python3 -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; print("CUDA preflight:", torch.cuda.get_device_name(0))'
@@ -199,6 +199,11 @@ exec strands-decider serve /models/checkpoint --host 0.0.0.0 --port {{ $dm.conta
 exec surogate serve /models/checkpoint --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- else if eq $framework "decider" }}
 exec uvicorn decider.serve_vllm:app --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+{{- else if eq $framework "pplx-decider" }}
+cat > /tmp/pplx-decider-server.py <<'PPLX_DECIDER_SERVER'
+{{ .Files.Get "files/pplx_decider_server.py" | trimSuffix "\n" }}
+PPLX_DECIDER_SERVER
+exec python3 /tmp/pplx-decider-server.py --checkpoint /models/checkpoint --model-name {{ .Values.model | squote }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- else }}
 exec vllm serve {{ .Values.model | squote }}{{ with $dm.revision }} --revision {{ . }}{{ end }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- end }}

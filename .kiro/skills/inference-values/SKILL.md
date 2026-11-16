@@ -29,6 +29,7 @@ Use `values-<model-name>-<framework>.yaml` for ordinary model presets and `value
 | Image generation                                              | `diffusers`                              | `diffusers-deployment.yaml`                         |
 | Decision model with its own Python server (Kev, Strands)      | `kev` / `strands-decider`                | `decision-model-deployment.yaml`                    |
 | Decision model on Surogate, Decider, or stock vLLM            | `surogate` / `decider` / `decision-vllm` | `decision-model-deployment.yaml`                    |
+| Perplexity native decision checkpoint (noncausal attention)  | `pplx-decider`                          | `decision-model-deployment.yaml` + chart HTTP adapter |
 | NVIDIA NIM                                                    | `nim-container` / NIM operator values    | `nim-*.yaml`                                        |
 | Trainium/Inferentia                                           | any vllm variant + `accelerator: neuron` | same, neuron resources                              |
 
@@ -88,6 +89,12 @@ image:
 ```
 
 Check the model's minimum vLLM version (new architectures land in specific releases) against the DLC tag.
+
+For native `pplx-decider` presets, use the pinned Python 3.12 image and the CUDA PyTorch packages
+specified by the checkpoint's `requirements.txt`. Pin both the model revision and package versions.
+The checkpoint includes its own inference source; the chart's HTTP adapter imports that source.
+Use native `modelParameters` (`mode`, `maxLength`, `batchTokens`, `cpuThreads`), without vLLM flags.
+Keep the API cluster-internal and use HTTP `/health` probes. CUDA 13 wheels need an R580-or-newer driver.
 
 ## Large Models: S3 Model Copy
 

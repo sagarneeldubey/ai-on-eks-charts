@@ -1,4 +1,4 @@
-{{- if has .Values.inference.framework (list "kev" "strands-decider" "surogate" "decider" "decision-vllm") }}
+{{- if has .Values.inference.framework (list "kev" "strands-decider" "surogate" "decider" "decision-vllm" "pplx-decider") }}
 {{- if ne .Values.inference.accelerator "gpu" }}
 {{- fail (printf "inference.framework %s requires inference.accelerator: gpu" .Values.inference.framework) }}
 {{- end }}

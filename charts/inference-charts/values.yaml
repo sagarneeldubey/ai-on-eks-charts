@@ -58,9 +58,9 @@ llamaCpp:
     periodSeconds: 10
     failureThreshold: 180
 
-# Decision-model servers (framework: kev, strands-decider, surogate, decider, or decision-vllm) settings.
+# Decision-model servers (framework: kev, strands-decider, surogate, decider, decision-vllm, or pplx-decider) settings.
 # The pod starts from a CUDA/Python base image, pip-installs the pinned server packages, checks CUDA,
-# then execs the server. kev, strands-decider and surogate first download the model snapshot into
+# then execs the server. kev, strands-decider, surogate and pplx-decider first download the model snapshot into
 # /models/checkpoint; decider (uvicorn decider.serve_vllm:app) and decision-vllm (vllm serve) let vLLM
 # download it. GPU only.
 decisionModel:
@@ -111,7 +111,7 @@ inference:
   # graviton runs on ARM64 CPU instances (no GPU/Neuron device plugin), e.g. llama.cpp or CPU vLLM builds.
   accelerator: gpu
 
-  # Framework type: vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, strands-decider, surogate, decider, or decision-vllm
+  # Framework type: vllm, ray-vllm, triton-vllm, aibrix, lws-vllm, llama-cpp, kev, strands-decider, surogate, decider, decision-vllm, or pplx-decider
   framework:
 
   #Ray Specific Options
@@ -263,7 +263,7 @@ inference:
           path: /health
           port: 8000
       # Optional; rendered when set (vllm deployment; tolerations also apply to nim-container).
-      # The kev / strands-decider deployment renders all of these, including the "decision-model only" keys.
+      # Decision-model deployments render all of these, including the "decision-model only" keys.
       # Unset settings use the defaults noted as "decision-model default".
       lifecycle: {} # e.g. {preStop: {exec: {command: ["/bin/sh", "-c", "sleep 15"]}}}
       livenessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 20}
