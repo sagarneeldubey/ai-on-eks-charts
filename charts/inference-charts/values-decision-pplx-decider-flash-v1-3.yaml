@@ -15,12 +15,10 @@ modelParameters:
 
 extraLabels:
   app.kubernetes.io/name: pplx-decider-flash-v1-3
-  app.kubernetes.io/part-of: decision-models
   app.kubernetes.io/version: "pplx-decider-0.5.0"
 
 decisionModel:
   revision: d06fb3f2d97e0a52325a0d463c450cf0338f44fe
-  containerPort: 8000
   modelCacheSize: 60Gi
   pipInstalls:
     - indexUrl: https://download.pytorch.org/whl/cu130
@@ -34,21 +32,9 @@ decisionModel:
         - huggingface-hub==1.31.0
         - fastapi==0.163.1
         - uvicorn==0.54.0
-  hostDriverLibs:
-    enabled: true
-    mountDir: /usr/local/lib
-  startupProbe:
-    httpGet:
-      path: /health
-      port: http
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 180
 
 inference:
   serviceName: pplx-decider-flash-v1-3
-  serviceNamespace: default
-  accelerator: gpu
   framework: pplx-decider
 
   modelServer:
@@ -57,8 +43,6 @@ inference:
       # The full image includes the compiler and headers required by Triton.
       tag: 3.12-bookworm@sha256:4209fae09a3e20afd863e528bfddc235da5fd5977983e1996cd54cc9a72e6267
     deployment:
-      replicas: 1
-      runtimeClassName: nvidia
       instanceType: g5.2xlarge
       sharedMemory: 4Gi
       podAnnotations:
@@ -80,28 +64,12 @@ inference:
                 - key: kubernetes.io/arch
                   operator: In
                   values: [amd64]
-      readinessProbe:
-        httpGet:
-          path: /health
-          port: http
-        periodSeconds: 10
-        timeoutSeconds: 5
-        failureThreshold: 3
-      livenessProbe:
-        httpGet:
-          path: /health
-          port: http
-        periodSeconds: 30
-        timeoutSeconds: 5
-        failureThreshold: 3
       resources:
         gpu:
           requests:
             cpu: "4"
             memory: 20Gi
             ephemeral-storage: 20Gi
-            nvidia.com/gpu: 1
           limits:
             memory: 28Gi
             ephemeral-storage: 80Gi
-            nvidia.com/gpu: 1

@@ -39,6 +39,57 @@ tests:
           path: spec.template.spec.tolerations
           value:
             - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      - equal:
+          path: spec.template.spec.runtimeClassName
+          value: nvidia
+
+  - it: uses configurable decision defaults from values.yaml
+    set:
+      decisionModel.deployment.runtimeClassName: custom-nvidia
+      decisionModel.deployment.strategy: {type: RollingUpdate}
+      decisionModel.deployment.progressDeadlineSeconds: 600
+      decisionModel.deployment.revisionHistoryLimit: 0
+      decisionModel.deployment.terminationGracePeriodSeconds: 0
+      decisionModel.deployment.tolerations: []
+      decisionModel.deployment.podAnnotations:
+        prometheus.io/scrape: "false"
+        prometheus.io/port: "9000"
+      decisionModel.deployment.readinessProbe:
+        httpGet: {path: /ready, port: http}
+      decisionModel.extraLabels:
+        team: decisions
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.runtimeClassName
+          value: custom-nvidia
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.progressDeadlineSeconds
+          value: 600
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 0
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 0
+      - equal:
+          path: spec.template.spec.tolerations
+          value: []
+      - equal:
+          path: spec.template.metadata.annotations["prometheus.io/scrape"]
+          value: "false"
+      - equal:
+          path: spec.template.metadata.annotations["prometheus.io/port"]
+          value: "9000"
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /ready
+      - equal:
+          path: metadata.labels.team
+          value: decisions
 
   - it: uses shared defaults when grace period and tolerations are null
     set:
@@ -310,20 +361,68 @@ tests:
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
 
-  - it: defaults to TCP probes and a 30 minute startup window
+  - it: defaults to HTTP health probes and a 30 minute startup window
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe
+          value: {httpGet: {path: /health, port: http}, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 180}
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /health
+
+  - it: keeps Kev TCP probes without inheriting HTTP handlers
+    values:
+      - ../values-decision-kev-27b.yaml
     documentSelector: {path: kind, value: Deployment}
     asserts:
       - equal:
           path: spec.template.spec.containers[0].startupProbe
           value: {tcpSocket: {port: http}, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 180}
       - equal:
-          path: spec.template.spec.containers[0].readinessProbe.tcpSocket.port
-          value: http
+          path: spec.template.spec.containers[0].readinessProbe
+          value: {tcpSocket: {port: http}, periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 3}
       - equal:
-          path: spec.template.spec.containers[0].livenessProbe.tcpSocket.port
-          value: http
+          path: spec.template.spec.containers[0].livenessProbe
+          value: {tcpSocket: {port: http}, periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 3}
+      - equal:
+          path: spec.template.metadata.annotations["prometheus.io/port"]
+          value: "8008"
 
-  - it: mounts no host driver libraries unless enabled
+  - it: lets deployment overrides replace probe handlers and disable the runtime class
+    set:
+      inference.modelServer.deployment.runtimeClassName: ""
+      inference.modelServer.deployment.readinessProbe:
+        exec: {command: ["/bin/true"]}
+        periodSeconds: 20
+      inference.modelServer.deployment.livenessProbe:
+        tcpSocket: {port: http}
+        periodSeconds: 15
+      extraLabels:
+        app.kubernetes.io/part-of: custom-models
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - notExists:
+          path: spec.template.spec.runtimeClassName
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe
+          value: {exec: {command: ["/bin/true"]}, periodSeconds: 20}
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe
+          value: {tcpSocket: {port: http}, periodSeconds: 15}
+      - equal:
+          path: metadata.labels["app.kubernetes.io/part-of"]
+          value: custom-models
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/part-of"]
+          value: custom-models
+
+  - it: allows disabling Bottlerocket host driver mounts
+    set:
+      decisionModel.hostDriverLibs.enabled: false
     documentSelector: {path: kind, value: Deployment}
     asserts:
       - notMatchRegex:
@@ -378,6 +477,9 @@ tests:
       - ../values-decision-strands-decider-2b.yaml
     documentSelector: {path: kind, value: Service}
     asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/part-of"]
+          value: decision-models
       - equal:
           path: spec.type
           value: ClusterIP

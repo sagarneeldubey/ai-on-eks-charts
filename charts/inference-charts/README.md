@@ -193,26 +193,28 @@ The following table lists the configurable parameters of the inference-charts ch
 | `inference.modelServer.deployment.topologySpreadConstraints.constraints` | List of topology spread constraints                                                 | See default configuration                                                   |
 | `inference.modelServer.deployment.podAffinity.enabled`                   | Enable pod affinity                                                                 | `true`                                                                      |
 | `inference.modelServer.deployment.lifecycle`                             | Lifecycle hooks for the vLLM container (e.g. preStop)                               | `{}`                                                                        |
-| `inference.modelServer.deployment.livenessProbe`                         | Liveness probe for vLLM or llama.cpp (llama.cpp defaults to `/health`)              | `{}`                                                                        |
-| `inference.modelServer.deployment.readinessProbe`                        | Readiness probe for vLLM or llama.cpp (llama.cpp defaults to `/health`)             | `{}`                                                                        |
+| `inference.modelServer.deployment.livenessProbe`                         | Liveness probe for vLLM, llama.cpp or decision models (llama.cpp defaults to `/health`) | `{}` (decision models inherit `decisionModel.deployment.livenessProbe`)    |
+| `inference.modelServer.deployment.readinessProbe`                        | Readiness probe for vLLM, llama.cpp or decision models (llama.cpp defaults to `/health`) | `{}` (decision models inherit `decisionModel.deployment.readinessProbe`)   |
 | `inference.modelServer.deployment.terminationGracePeriodSeconds`         | Termination grace period for the vLLM and decision-model pods                       | Not set (decision models: `120`)                                            |
 | `inference.modelServer.deployment.tolerations`                           | Pod tolerations (vLLM, llama.cpp, decision models, and NIM container); `[]` clears tolerations | Not set (decision models: `nvidia.com/gpu` Exists NoSchedule)         |
 | `inference.modelServer.deployment.nodeAffinity`                          | Pod node affinity (decision models)                                                 | `{}`                                                                        |
 | `inference.modelServer.deployment.podAnnotations`                        | Extra pod annotations, merged over the defaults (decision models)                   | CloudWatch/OpenTelemetry auto-instrumentation off; Prometheus scrape on `decisionModel.containerPort` at `/metrics` |
-| `inference.modelServer.deployment.runtimeClassName`                      | Pod runtime class, e.g. `nvidia` (decision models)                                  | Not set                                                                     |
+| `inference.modelServer.deployment.runtimeClassName`                      | Pod runtime class (decision models); `""` omits it                                 | Not set (decision models: `nvidia`)                                         |
 | `inference.modelServer.deployment.strategy`                              | Deployment update strategy (decision models)                                        | `{type: Recreate}`                                                          |
 | `inference.modelServer.deployment.progressDeadlineSeconds`               | Deployment progress deadline (decision models)                                      | `1800`                                                                      |
 | `inference.modelServer.deployment.revisionHistoryLimit`                  | Deployment revision history limit (decision models)                                 | `2`                                                                         |
 | `llamaCpp.startupProbe`                                                  | llama.cpp startup health check; allows up to 30 minutes for model download         | `/health`, every 10s, 180 failures                                         |
 | `decisionModel.revision`                                                 | Hugging Face commit to serve (not used by decider)                                  | Not set (default branch)                                                    |
+| `decisionModel.extraLabels`                                             | Labels applied only to decision resources; `extraLabels` overrides matching keys   | `{app.kubernetes.io/part-of: decision-models}`                               |
+| `decisionModel.deployment`                                              | Shared decision deployment defaults; `inference.modelServer.deployment` overrides take precedence | See `values.yaml`                                               |
 | `decisionModel.containerPort`                                            | Port the decision-model server listens on in the pod                                | `8000`                                                                      |
 | `decisionModel.preStartScript`                                           | Shell lines run before the pip installs, e.g. a temporary image patch               | `""`                                                                        |
 | `decisionModel.pipInstalls`                                              | Ordered `pip install` steps: `{packages: [...], indexUrl: ...}`                     | `[]`                                                                        |
 | `decisionModel.modelCacheSize`                                           | Size limit of the `/models` emptyDir (HF cache + checkpoint)                        | `100Gi`                                                                     |
 | `decisionModel.extraEnv`                                                 | Extra env vars in Kubernetes EnvVar form (supports `valueFrom` secrets)             | `[]`                                                                        |
-| `decisionModel.hostDriverLibs.enabled`                                   | Mount Bottlerocket's `libcuda.so.1` and `libnvidia-ml.so.1` read-only               | `false`                                                                     |
+| `decisionModel.hostDriverLibs.enabled`                                   | Mount Bottlerocket's `libcuda.so.1` and `libnvidia-ml.so.1` read-only               | `true` (disable on other node operating systems)                            |
 | `decisionModel.hostDriverLibs.mountDir`                                  | Container directory for the driver libraries; prepended to `LD_LIBRARY_PATH`        | `/usr/local/lib`                                                            |
-| `decisionModel.startupProbe`                                             | Decision-model startup probe                                                        | TCP on `http`, every 10s, 180 failures                                      |
+| `decisionModel.startupProbe`                                             | Decision-model startup probe                                                        | HTTP `/health` on `http`, every 10s, 180 failures                            |
 | `inference.rayOptions.rayVersion`                                        | Ray version to use                                                                  | `2.47.0`                                                                    |
 | `inference.rayOptions.autoscaling.enabled`                               | Enable Ray native autoscaling                                                       | `false`                                                                     |
 | `inference.rayOptions.autoscaling.upscalingMode`                         | Ray autoscaler upscaling mode                                                       | `Default`                                                                   |
@@ -546,23 +548,32 @@ The pod runs these steps:
 4. Fails fast if CUDA is unavailable.
 5. Execs the server, with `modelParameters` as flags.
 
+The decision presets inherit shared settings from `values.yaml`: the `decision-models` label,
+Bottlerocket driver mounts, NVIDIA runtime class, probes, rollout settings, tolerations and pod
+annotations. These live under `decisionModel` so they apply only to decision servers. The namespace
+(`default`), replica count (`1`) and GPU request/limit (`1`) use the existing chart-wide defaults.
+Keep model revisions, images, packages, server flags, resource sizing and node placement in the preset.
+Override shared deployment defaults through `inference.modelServer.deployment`; an empty runtime class
+(`runtimeClassName: ""`) omits it.
+
 Notes:
 
 - The d1-3B, Gemma 4 31B and Decider 35B-A3B presets use the digest-pinned
   `vllm/vllm-openai:v0.33.0` image (CUDA 13). With the Bottlerocket host driver mounts, nodes need
   [CUDA 13-compatible NVIDIA drivers (R580 or newer)](https://docs.nvidia.com/deploy/cuda-compatibility/595/minor-version-compatibility.html).
 - The Perplexity Decider presets use pinned CUDA 13 PyTorch wheels and require the same R580-or-newer drivers.
-- GPU only. Startup can take up to 30 minutes, so the startup probe allows 180 × 10s and the example values
-  set `progressDeadlineSeconds: 1800`.
+- GPU only. Startup can take up to 30 minutes, so the shared startup probe allows 180 × 10s and
+  `decisionModel.deployment.progressDeadlineSeconds` defaults to `1800`.
 - Unset or `null` deployment settings use a 120-second termination grace period and the `nvidia.com/gpu`
   `Exists` `NoSchedule` toleration. Set `inference.modelServer.deployment.terminationGracePeriodSeconds: 0`
   for immediate shutdown or `inference.modelServer.deployment.tolerations: []` to clear tolerations.
-- Probes default to TCP checks on the `http` port; override them for servers with a health endpoint.
+- Probes default to HTTP `/health` checks on the `http` port. Kev overrides all three handlers with TCP
+  checks, setting `httpGet: null` to remove the inherited HTTP handler while retaining the probe timings.
 - The pod runs with `automountServiceAccountToken: false`, the `RuntimeDefault` seccomp profile, no privilege
   escalation, and all capabilities dropped.
-- On Bottlerocket nodes, set `decisionModel.hostDriverLibs.enabled: true` to mount only `libcuda.so.1` and
-  `libnvidia-ml.so.1` from the host, read-only.
-- The example values set `runtimeClassName: nvidia`. The NVIDIA GPU Operator creates that RuntimeClass
+- Bottlerocket driver mounts are enabled by default and mount only `libcuda.so.1` and `libnvidia-ml.so.1`
+  from the host, read-only. Set `decisionModel.hostDriverLibs.enabled: false` on other node operating systems.
+- The shared runtime class is `nvidia`. The NVIDIA GPU Operator creates that RuntimeClass
   (`enable_nvidia_gpu_operator = true` in the AI on EKS infrastructure); without it, pods are rejected.
 - Scheduling uses `inference.modelServer.deployment.nodeAffinity`; the example values require the g7e or g5
   instance family via both Karpenter and EKS Auto Mode node labels.

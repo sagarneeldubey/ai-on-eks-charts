@@ -16,6 +16,10 @@ Use `values-<model-name>-<framework>.yaml` for ordinary model presets and `value
 - S3 staging companions are prefixed `values-s3-copy-` (`values-s3-copy-glm-5-2.yaml`).
 - Decision models use the `values-decision-` prefix to group their files. Drop the suffix when the server matches the model family (`values-decision-kev-27b.yaml`, `values-decision-strands-decider-2b.yaml`, `values-decision-decider-35b-a3b-nvfp4.yaml`); otherwise keep the server suffix (`values-decision-rune-26b-a4b-v3-surogate.yaml`, `values-decision-gemma-4-31b-it-vllm.yaml`, `values-decision-d1-3b-vllm.yaml`).
 - The `decision-` prefix classifies the file. Use the model/server portion for `inference.serviceName` and the Helm release name, e.g. `kev-27b` or `d1-3b-vllm`.
+- Decision presets inherit labels, Bottlerocket driver mounts, deployment settings and health probes
+  from `decisionModel` in `values.yaml`, plus the existing namespace, replica and GPU defaults.
+  Keep only model-specific overrides in the preset. Kev replaces inherited HTTP probe handlers with
+  TCP using `httpGet: null`; disable `decisionModel.hostDriverLibs.enabled` on non-Bottlerocket nodes.
 
 ## Choose a Framework
 

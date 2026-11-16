@@ -9,11 +9,9 @@ model: Mapika/decider-35b-a3b-nvfp4
 
 extraLabels:
   app.kubernetes.io/name: decider-35b-a3b-nvfp4
-  app.kubernetes.io/part-of: decision-models
   app.kubernetes.io/version: "vllm-0.33.0"
 
 decisionModel:
-  containerPort: 8000
   modelCacheSize: 200Gi
   pipInstalls:
     - packages:
@@ -21,20 +19,10 @@ decisionModel:
         - "--only-binary=:all:"
         - decider-ai==1.10.0
   hostDriverLibs:
-    enabled: true
     mountDir: /usr/local/cuda-13.0/compat
-  startupProbe:
-    httpGet:
-      path: /health
-      port: http
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 180
 
 inference:
   serviceName: decider-35b-a3b-nvfp4
-  serviceNamespace: default
-  accelerator: gpu
   framework: decider
 
   modelServer:
@@ -42,8 +30,6 @@ inference:
       repository: vllm/vllm-openai
       tag: v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     deployment:
-      replicas: 1
-      runtimeClassName: nvidia
       sharedMemory: 8Gi
       # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
       # and the observability pod annotations come from the chart's decision-model defaults.
@@ -68,31 +54,15 @@ inference:
                   operator: In
                   values:
                     - amd64
-      readinessProbe:
-        httpGet:
-          path: /health
-          port: http
-        periodSeconds: 10
-        timeoutSeconds: 5
-        failureThreshold: 3
-      livenessProbe:
-        httpGet:
-          path: /health
-          port: http
-        periodSeconds: 30
-        timeoutSeconds: 5
-        failureThreshold: 3
       resources:
         gpu:
           requests:
             cpu: "6"
             memory: 48Gi
             ephemeral-storage: 40Gi
-            nvidia.com/gpu: 1
           limits:
             memory: 60Gi
             ephemeral-storage: 200Gi
-            nvidia.com/gpu: 1
     env:
       DECIDER_MODEL: Mapika/decider-35b-a3b-nvfp4
       DECIDER_MAX_STATE_TOKENS: "32768"

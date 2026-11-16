@@ -64,6 +64,9 @@ llamaCpp:
 # /models/checkpoint; decider (uvicorn decider.serve_vllm:app) and decision-vllm (vllm serve) let vLLM
 # download it. GPU only.
 decisionModel:
+  # Labels applied only to decision-model resources, merged with extraLabels.
+  extraLabels:
+    app.kubernetes.io/part-of: decision-models
   # Hugging Face commit to serve. Pin it so restarts serve identical weights; empty = default branch.
   revision:
   # Port the server listens on inside the pod. The Service still exposes service.port.
@@ -82,11 +85,58 @@ decisionModel:
   # When enabled, only libcuda.so.1 and libnvidia-ml.so.1 are mounted read-only from hostDir
   # into mountDir, and mountDir is prepended to LD_LIBRARY_PATH.
   hostDriverLibs:
-    enabled: false
+    # All bundled decision presets target Bottlerocket. Disable on other node operating systems.
+    enabled: true
     hostDir: /x86_64-bottlerocket-linux-gnu/sys-root/usr/lib
     mountDir: /usr/local/lib
-  # Empty = TCP check on the http port every 10s for up to 30 minutes (installs + download).
-  startupProbe: {}
+  # Allow 30 minutes for installs and downloads. Kev overrides the HTTP handler with TCP.
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 180
+  # Decision-only defaults; inference.modelServer.deployment overrides take precedence.
+  deployment:
+    runtimeClassName: nvidia
+    strategy:
+      type: Recreate
+    progressDeadlineSeconds: 1800
+    revisionHistoryLimit: 2
+    terminationGracePeriodSeconds: 120
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: http
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: http
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+    # Auto-instrumentation can override the pip-installed model dependencies.
+    podAnnotations:
+      cloudwatch.aws.amazon.com/auto-annotate-dotnet: "false"
+      cloudwatch.aws.amazon.com/auto-annotate-java: "false"
+      cloudwatch.aws.amazon.com/auto-annotate-nodejs: "false"
+      cloudwatch.aws.amazon.com/auto-annotate-python: "false"
+      instrumentation.opentelemetry.io/inject-dotnet: "false"
+      instrumentation.opentelemetry.io/inject-java: "false"
+      instrumentation.opentelemetry.io/inject-nodejs: "false"
+      instrumentation.opentelemetry.io/inject-python: "false"
+      prometheus.io/scrape: "true"
+      prometheus.io/path: /metrics
+      # Empty = decisionModel.containerPort.
+      prometheus.io/port: ""
 
 # Extra labels applied to all resources (pods, deployments, services, etc.)
 extraLabels: {}
@@ -264,7 +314,7 @@ inference:
           port: 8000
       # Optional; rendered when set (vllm deployment; tolerations also apply to nim-container).
       # Decision-model deployments render all of these, including the "decision-model only" keys.
-      # Unset settings use the defaults noted as "decision-model default".
+      # Unset settings use decisionModel.deployment defaults.
       lifecycle: {} # e.g. {preStop: {exec: {command: ["/bin/sh", "-c", "sleep 15"]}}}
       livenessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 20}
       nodeAffinity: {} # decision-model only; e.g. {requiredDuringSchedulingIgnoredDuringExecution: {nodeSelectorTerms: [...]}}
@@ -275,7 +325,7 @@ inference:
       progressDeadlineSeconds: # decision-model only; decision-model default 1800 (package installs + weight download)
       readinessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 10}
       revisionHistoryLimit: # decision-model only; decision-model default 2
-      runtimeClassName: # decision-model only; e.g. nvidia
+      runtimeClassName: # decision-model only; default nvidia; set "" to omit
       strategy: {} # decision-model only; decision-model default {type: Recreate} to free a single-GPU node before the new pod starts
       terminationGracePeriodSeconds: # decision-model default 120; set 0 for immediate shutdown
       # Unset/null uses the decision-model GPU toleration; [] explicitly clears tolerations.
