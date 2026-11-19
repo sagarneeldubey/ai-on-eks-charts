@@ -7,14 +7,11 @@
 # CUDA 13 wheels require an NVIDIA R580 or newer host driver.
 model: perplexity-ai/pplx-decider-v1.3
 
-# Native adapter flags (camelCase -> --kebab-case). Keep the reference path and
-# separate-question mode so calibrated decisions and Locate retain their semantics.
+# Native adapter flags (camelCase -> --kebab-case). The adapter defaults to the reference
+# path and separate-question mode, preserving calibrated decisions and Locate semantics.
 modelParameters:
-  device: cuda
-  mode: separate
   maxLength: 8192
   batchTokens: 8192
-  cpuThreads: 8
 
 extraLabels:
   app.kubernetes.io/name: pplx-decider-v1-3
@@ -46,28 +43,8 @@ inference:
       # The full image includes the compiler and headers required by Triton.
       tag: 3.12-bookworm@sha256:4209fae09a3e20afd863e528bfddc235da5fd5977983e1996cd54cc9a72e6267
     deployment:
-      instanceType: g7e.4xlarge
+      instanceFamily: g7e
       sharedMemory: 8Gi
-      # The adapter has no /metrics endpoint.
-      podAnnotations:
-        prometheus.io/scrape: "false"
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - key: karpenter.k8s.aws/instance-family
-                  operator: In
-                  values: [g7e]
-                - key: kubernetes.io/arch
-                  operator: In
-                  values: [amd64]
-            - matchExpressions:
-                - key: eks.amazonaws.com/instance-family
-                  operator: In
-                  values: [g7e]
-                - key: kubernetes.io/arch
-                  operator: In
-                  values: [amd64]
       resources:
         gpu:
           requests:

@@ -71,24 +71,16 @@ decisionModel:
   revision:
   # Port the server listens on inside the pod. The Service still exposes service.port.
   containerPort: 8000
-  # Optional shell lines run before the pip installs, e.g. a temporary patch to the image.
-  preStartScript: ""
   # pip install invocations, run in order at startup.
   # Each entry: {packages: [<requirement specifier or pip flag>, ...], indexUrl: <optional --index-url>}
   pipInstalls: []
   # Size limit of the /models emptyDir that holds the Hugging Face cache and the checkpoint.
   modelCacheSize: 100Gi
+  # Existing PVC to mount at /models instead of emptyDir; it must be in inference.serviceNamespace.
+  modelCacheExistingClaim: ""
   # Extra container env vars in Kubernetes EnvVar form; use this for values from Secrets,
   # e.g. [{name: KEV_API_KEY, valueFrom: {secretKeyRef: {name: kev-api-key, key: api-key}}}]
   extraEnv: []
-  # Bottlerocket keeps the NVIDIA driver libraries outside the container root filesystem.
-  # When enabled, only libcuda.so.1 and libnvidia-ml.so.1 are mounted read-only from hostDir
-  # into mountDir, and mountDir is prepended to LD_LIBRARY_PATH.
-  hostDriverLibs:
-    # All bundled decision presets target Bottlerocket. Disable on other node operating systems.
-    enabled: true
-    hostDir: /x86_64-bottlerocket-linux-gnu/sys-root/usr/lib
-    mountDir: /usr/local/lib
   # Allow 30 minutes for installs and downloads. Kev overrides the HTTP handler with TCP.
   startupProbe:
     httpGet:
@@ -125,18 +117,8 @@ decisionModel:
       failureThreshold: 3
     # Auto-instrumentation can override the pip-installed model dependencies.
     podAnnotations:
-      cloudwatch.aws.amazon.com/auto-annotate-dotnet: "false"
-      cloudwatch.aws.amazon.com/auto-annotate-java: "false"
-      cloudwatch.aws.amazon.com/auto-annotate-nodejs: "false"
       cloudwatch.aws.amazon.com/auto-annotate-python: "false"
-      instrumentation.opentelemetry.io/inject-dotnet: "false"
-      instrumentation.opentelemetry.io/inject-java: "false"
-      instrumentation.opentelemetry.io/inject-nodejs: "false"
       instrumentation.opentelemetry.io/inject-python: "false"
-      prometheus.io/scrape: "true"
-      prometheus.io/path: /metrics
-      # Empty = decisionModel.containerPort.
-      prometheus.io/port: ""
 
 # Extra labels applied to all resources (pods, deployments, services, etc.)
 extraLabels: {}
@@ -317,10 +299,13 @@ inference:
       # Unset settings use decisionModel.deployment defaults.
       lifecycle: {} # e.g. {preStop: {exec: {command: ["/bin/sh", "-c", "sleep 15"]}}}
       livenessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 20}
+      # decision-model only; accepts Karpenter or EKS Auto Mode family labels.
+      # An explicit instanceType takes precedence over the family.
+      instanceFamily:
       nodeAffinity: {} # decision-model only; e.g. {requiredDuringSchedulingIgnoredDuringExecution: {nodeSelectorTerms: [...]}}
       # decision-model only; merged over the decision-model default annotations, which turn off CloudWatch
-      # Application Signals / OpenTelemetry auto-instrumentation and set prometheus.io/scrape, path (/metrics),
-      # and port (decisionModel.containerPort).
+      # Application Signals / OpenTelemetry Python auto-instrumentation. Prometheus scraping is enabled
+      # only for decision-vllm and surogate, at /metrics on decisionModel.containerPort.
       podAnnotations: {}
       progressDeadlineSeconds: # decision-model only; decision-model default 1800 (package installs + weight download)
       readinessProbe: {} # e.g. {httpGet: {path: /health, port: 8000}, periodSeconds: 10}

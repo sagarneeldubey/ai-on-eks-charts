@@ -16,10 +16,10 @@ Use `values-<model-name>-<framework>.yaml` for ordinary model presets and `value
 - S3 staging companions are prefixed `values-s3-copy-` (`values-s3-copy-glm-5-2.yaml`).
 - Decision models use the `values-decision-` prefix to group their files. Drop the suffix when the server matches the model family (`values-decision-kev-27b.yaml`, `values-decision-strands-decider-2b.yaml`, `values-decision-decider-35b-a3b-nvfp4.yaml`); otherwise keep the server suffix (`values-decision-rune-26b-a4b-v3-surogate.yaml`, `values-decision-gemma-4-31b-it-vllm.yaml`, `values-decision-d1-3b-vllm.yaml`).
 - The `decision-` prefix classifies the file. Use the model/server portion for `inference.serviceName` and the Helm release name, e.g. `kev-27b` or `d1-3b-vllm`.
-- Decision presets inherit labels, Bottlerocket driver mounts, deployment settings and health probes
+- Decision presets inherit labels, NVIDIA runtime, deployment settings and health probes
   from `decisionModel` in `values.yaml`, plus the existing namespace, replica and GPU defaults.
   Keep only model-specific overrides in the preset. Kev replaces inherited HTTP probe handlers with
-  TCP using `httpGet: null`; disable `decisionModel.hostDriverLibs.enabled` on non-Bottlerocket nodes.
+  TCP using `httpGet: null`. Driver libraries are supplied by the NVIDIA runtime.
 
 ## Choose a Framework
 
@@ -39,7 +39,7 @@ Use `values-<model-name>-<framework>.yaml` for ordinary model presets and `value
 
 ## The modelParameters Contract (most common mistake)
 
-`modelParameters` keys are **camelCase** and are converted by `templates/_helpers.tpl` (`inference-charts.modelParameters`) into `vllm serve` CLI flags:
+`modelParameters` keys are **camelCase** and are converted by `templates/_helpers.tpl` (`inference-charts.modelParameters`) into the selected server's CLI flags:
 
 - Every key is kebab-cased into a flag: `maxModelLen: 131072` → `--max-model-len 131072`.
 - Booleans render as bare flags: `enablePrefixCaching: true` → `--enable-prefix-caching`; `false` omits the flag entirely.
@@ -80,7 +80,9 @@ Parser names change between vLLM releases — confirm with `vllm serve --help` i
 2. Fit against per-node GPU memory: g6e.48xlarge = 8× L40S (384 GB), p5.48xlarge = 8× H100 (640 GB), p5en.48xlarge = 8× H200 (1128 GB).
 3. Prefer the CHEAPEST instance the model fits on with KV-cache headroom (~20%+ beyond weights). Don't put a 13B model on a P-family node.
 4. If it doesn't fit one node → `lws-vllm` with `pipelineParallelSize` = node count.
-5. Always pin `instanceType` under `deployment:` — it becomes a `nodeSelector` and helps Karpenter provision correctly.
+5. Pin `instanceType` under `deployment:` when the model needs an exact size. Decision presets can instead
+   use `instanceFamily` for flexible sizing across Karpenter and EKS Auto Mode. Avoid specifying both:
+   `instanceType` takes precedence. Extra required `nodeAffinity` terms are combined with the family.
 
 ## Image
 
@@ -118,19 +120,19 @@ values_file="values-<model>-<framework>.yaml"
 # 1. Lint
 helm lint . -f "$values_file"
 
-# 2. Render and inspect the exact vllm serve command
-helm template test . -f "$values_file" | grep -A2 "vllm serve"
+# 2. Render and inspect the server command
+helm template test . -f "$values_file" | grep -E "exec |vllm serve"
 
-# 3. Confirm nodeSelector pin rendered
-helm template test . -f "$values_file" | grep -A1 nodeSelector
+# 3. Confirm the instance selector or family affinity rendered
+helm template test . -f "$values_file" | grep -A15 -E "nodeSelector:|nodeAffinity:"
 ```
 
 Verify in the rendered output:
 
 - [ ] Every `modelParameters` key became the intended `--flag` (kebab-case, booleans bare)
-- [ ] `--tensor-parallel-size` matches the GPU request
+- [ ] For vLLM, `--tensor-parallel-size` matches the GPU request; native decision servers do not receive this flag
 - [ ] Parser names valid for the pinned image's vLLM version
-- [ ] `nodeSelector: node.kubernetes.io/instance-type: <instance>` present
+- [ ] Exact `instanceType` renders a node selector; decision `instanceFamily` renders both label alternatives
 - [ ] GPU requests == limits
 - [ ] `serviceName` is kebab-case and matches the model/server portion of the file name, excluding `values-` or `values-decision-` and `.yaml`
 

@@ -2,18 +2,13 @@
 # NVIDIA GPU in the g5 instance family (on-demand), with Bottlerocket nodes.
 #
 # The pinned vLLM 0.33 CUDA 13 image includes the A10G GPU target. Bottlerocket nodes need a
-# CUDA 13-compatible NVIDIA driver (R580 or newer) for the host driver mounts. The API is under /v1.
+# CUDA 13-compatible NVIDIA driver (R580 or newer). The API is under /v1.
 model: LiquidAI/d1-3B
 
 # Rendered as `vllm serve` flags (camelCase -> --kebab-case; true renders a bare flag).
 modelParameters:
-  servedModelName: LiquidAI/d1-3B
-  dtype: bfloat16
   maxModelLen: 8192
   gpuMemoryUtilization: 0.90
-  tensorParallelSize: 1
-  logprobsMode: raw_logprobs
-  enablePrefixCaching: true
 
 extraLabels:
   app.kubernetes.io/name: d1-3b
@@ -21,8 +16,6 @@ extraLabels:
 
 decisionModel:
   revision: 051bcc464b01b9f92942b364d9586b0ef5912432
-  hostDriverLibs:
-    mountDir: /usr/local/cuda-13.0/compat
 
 inference:
   serviceName: d1-3b-vllm
@@ -33,38 +26,16 @@ inference:
       repository: vllm/vllm-openai
       tag: v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     deployment:
+      instanceFamily: g5
       sharedMemory: 4Gi
-      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
-      # and the observability pod annotations come from the chart's decision-model defaults.
       nodeAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:
           nodeSelectorTerms:
             - matchExpressions:
-                - key: karpenter.k8s.aws/instance-family
-                  operator: In
-                  values:
-                    - g5
                 - key: karpenter.sh/capacity-type
                   operator: In
                   values:
                     - on-demand
-                - key: kubernetes.io/arch
-                  operator: In
-                  values:
-                    - amd64
-            - matchExpressions:
-                - key: eks.amazonaws.com/instance-family
-                  operator: In
-                  values:
-                    - g5
-                - key: karpenter.sh/capacity-type
-                  operator: In
-                  values:
-                    - on-demand
-                - key: kubernetes.io/arch
-                  operator: In
-                  values:
-                    - amd64
       resources:
         gpu:
           requests:
@@ -74,7 +45,3 @@ inference:
           limits:
             memory: 24Gi
             ephemeral-storage: 100Gi
-    env:
-      VLLM_LOGGING_LEVEL: INFO
-      # hostDriverLibs prepends /usr/local/cuda-13.0/compat at startup.
-      LD_LIBRARY_PATH: /usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/cuda/lib64

@@ -5,11 +5,14 @@ import binascii
 import sys
 import types
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 from PIL import UnidentifiedImageError
+import anyio
 
 SERVER = Path(__file__).resolve().parents[1] / "files" / "pplx_decider_server.py"
 SPEC = importlib.util.spec_from_file_location("pplx_decider_server", SERVER)
@@ -153,6 +156,35 @@ class ServerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Model could not load"):
             with TestClient(self.app):
                 self.fail("The server must not become ready after a failed model load")
+
+    def test_health_stays_responsive_when_inference_occupies_all_thread_workers(self):
+        started, release = Event(), Event()
+
+        def block_inference(_):
+            started.set()
+            if not release.wait(10):
+                raise RuntimeError("Test inference was not released")
+            return self.response
+
+        self.decider.decide.side_effect = block_inference
+        with TestClient(self.app) as client:
+            async def limit_workers():
+                limiter = anyio.to_thread.current_default_thread_limiter()
+                original = limiter.total_tokens
+                limiter.total_tokens = 1
+                return limiter, original
+
+            limiter, original = client.portal.call(limit_workers)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                inference = executor.submit(client.post, "/v1/systemone", json=self.request)
+                try:
+                    self.assertTrue(started.wait(5))
+                    health = executor.submit(client.get, "/health").result(timeout=2)
+                    self.assertEqual(health.status_code, 200)
+                finally:
+                    release.set()
+                    inference.result(timeout=5)
+                    client.portal.call(setattr, limiter, "total_tokens", original)
 
 
 if __name__ == "__main__":

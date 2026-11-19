@@ -18,8 +18,6 @@ decisionModel:
         - --no-deps
         - "--only-binary=:all:"
         - decider-ai==1.10.0
-  hostDriverLibs:
-    mountDir: /usr/local/cuda-13.0/compat
 
 inference:
   serviceName: decider-35b-a3b-nvfp4
@@ -30,30 +28,8 @@ inference:
       repository: vllm/vllm-openai
       tag: v0.33.0@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e
     deployment:
+      instanceFamily: g7e
       sharedMemory: 8Gi
-      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
-      # and the observability pod annotations come from the chart's decision-model defaults.
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - key: karpenter.k8s.aws/instance-family
-                  operator: In
-                  values:
-                    - g7e
-                - key: kubernetes.io/arch
-                  operator: In
-                  values:
-                    - amd64
-            - matchExpressions:
-                - key: eks.amazonaws.com/instance-family
-                  operator: In
-                  values:
-                    - g7e
-                - key: kubernetes.io/arch
-                  operator: In
-                  values:
-                    - amd64
       resources:
         gpu:
           requests:
@@ -64,12 +40,5 @@ inference:
             memory: 60Gi
             ephemeral-storage: 200Gi
     env:
-      DECIDER_MODEL: Mapika/decider-35b-a3b-nvfp4
-      DECIDER_MAX_STATE_TOKENS: "32768"
       DECIDER_VLLM_MAX_MODEL_LEN: "34816"
-      DECIDER_VLLM_GPU_MEMORY_UTILIZATION: "0.90"
       DECIDER_VLLM_MAX_NUM_SEQS: "32"
-      DECIDER_VLLM_MAX_BATCHED_TOKENS: "16384"
-      DECIDER_VLLM_WIDE_LOGPROBS: "1"
-      # hostDriverLibs prepends /usr/local/cuda-13.0/compat at startup.
-      LD_LIBRARY_PATH: /usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/cuda/lib64

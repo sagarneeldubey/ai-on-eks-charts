@@ -66,6 +66,7 @@ app.kubernetes.io/component: {{.Values.inference.serviceName}}
 
 {{- define "inference-charts.modelParameters" -}}
 {{- $modelParameters := .Values.modelParameters -}}
+{{- $nativeDecisionServer := has .Values.inference.framework (list "kev" "strands-decider" "surogate" "decider" "pplx-decider") -}}
 {{- $args := list -}}
 {{ $tpsize := 1 -}}
 {{- range $key, $value := $modelParameters -}}
@@ -79,14 +80,14 @@ app.kubernetes.io/component: {{.Values.inference.serviceName}}
 {{- end -}}
 {{- if eq .Values.inference.framework "aibrix" }}
     {{- $args = append $args (printf "--served-model-name %s" .Values.inference.serviceName) }}
-{{- else if .Values.modelPath }}
+{{- else if and .Values.modelPath (not $nativeDecisionServer) (not ($modelParameters | default dict).servedModelName) }}
     {{- $args = append $args (printf "--served-model-name %s" .Values.model) }}
 {{- end }}
-{{- if .Values.vllm.loadFormat }}
+{{- if and .Values.vllm.loadFormat (not $nativeDecisionServer) }}
     {{- $args = append $args (printf "--load-format %s" .Values.vllm.loadFormat ) }}
 {{- end}}
-{{- /* llama.cpp and the decision-model servers have no tensor parallel flag. */}}
-{{- if and (not (has .Values.inference.framework (list "llama-cpp" "kev" "strands-decider" "surogate" "decider" "pplx-decider"))) (not (.Values.modelParameters | default dict).tensorParallelSize) (ne .Values.inference.accelerator "graviton")}}
+{{- /* llama.cpp and native decision servers have no tensor parallel flag. */}}
+{{- if and (ne .Values.inference.framework "llama-cpp") (not $nativeDecisionServer) (not (.Values.modelParameters | default dict).tensorParallelSize) (ne .Values.inference.accelerator "graviton")}}
     {{- if eq .Values.inference.accelerator "neuron"}}
         {{- $tpsize = mul (index .Values.inference.modelServer.deployment.resources.neuron.requests "aws.amazon.com/neuron") 2}}
     {{- else }}
@@ -168,44 +169,84 @@ nodeAffinity:
 {{- end -}}
 
 {{/*
+Select an instance family using either Karpenter or EKS Auto Mode labels.
+Combine each family alternative with every caller-supplied required term so
+the family and custom requirements both apply. An exact instanceType takes
+precedence over the family, while custom nodeAffinity remains in effect.
+*/}}
+{{- define "inference-charts.decisionModelNodeAffinity" -}}
+{{- $deployment := .Values.inference.modelServer.deployment -}}
+{{- $affinity := deepCopy ($deployment.nodeAffinity | default dict) -}}
+{{- if and $deployment.instanceFamily (not $deployment.instanceType) -}}
+{{- $required := $affinity.requiredDuringSchedulingIgnoredDuringExecution | default dict -}}
+{{- $hasExistingTerms := hasKey $required "nodeSelectorTerms" -}}
+{{- $existingTerms := list (dict) -}}
+{{- if $hasExistingTerms -}}
+{{- $existingTerms = $required.nodeSelectorTerms -}}
+{{- end -}}
+{{- $terms := list -}}
+{{- range $prefix := list "karpenter.k8s.aws" "eks.amazonaws.com" -}}
+{{- range $existingTerms -}}
+{{- if or (not $hasExistingTerms) .matchExpressions .matchFields -}}
+{{- $term := deepCopy . -}}
+{{- $family := dict "key" (printf "%s/instance-family" $prefix) "operator" "In" "values" (list $deployment.instanceFamily) -}}
+{{- $_ := set $term "matchExpressions" (append ($term.matchExpressions | default list) $family) -}}
+{{- $terms = append $terms $term -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $required "nodeSelectorTerms" $terms -}}
+{{- $_ := set $affinity "requiredDuringSchedulingIgnoredDuringExecution" $required -}}
+{{- end -}}
+{{- if $affinity -}}
+{{- toYaml $affinity -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Startup script for the decision-model servers.
 These servers ship as Python packages rather than images, so the pod installs the
-pinned packages, downloads the pinned model snapshot, checks CUDA, then execs the server.
+pinned packages, checks CUDA, downloads the pinned model snapshot, then execs the server.
 */}}
 {{- define "inference-charts.decisionModelStartScript" -}}
 {{- $dm := .Values.decisionModel -}}
 {{- $framework := .Values.inference.framework -}}
+{{- $checkpoint := "/models/checkpoint" -}}
+{{- with .Values.modelPath -}}
+{{- $checkpoint = . | squote -}}
+{{- end -}}
 set -euo pipefail
-{{- if $dm.hostDriverLibs.enabled }}
-export LD_LIBRARY_PATH="{{ $dm.hostDriverLibs.mountDir }}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-{{- end }}
-{{- with $dm.preStartScript }}
-{{ . | trim }}
-{{- end }}
 {{- range $dm.pipInstalls }}
 python3 -m pip install --no-cache-dir{{ with .indexUrl }} --index-url {{ . | squote }}{{ end }}{{ range .packages }} {{ . | squote }}{{ end }}
 {{- end }}
+python3 -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; print("CUDA preflight:", torch.cuda.get_device_name(0))'
 {{- /* decider and decision-vllm load the model through vLLM, which downloads it itself. */}}
-{{- if has $framework (list "kev" "strands-decider" "surogate" "pplx-decider") }}
+{{- if and (not .Values.modelPath) (has $framework (list "kev" "strands-decider" "surogate" "pplx-decider")) }}
 python3 -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="{{ .Values.model }}",{{ with $dm.revision }} revision="{{ . }}",{{ end }} local_dir="/models/checkpoint")'
 {{- end }}
-python3 -c 'import torch; assert torch.cuda.is_available(), "CUDA is unavailable"; print("CUDA preflight:", torch.cuda.get_device_name(0))'
 {{- $params := include "inference-charts.modelParameters" . | trim }}
 {{- if eq $framework "kev" }}
-exec python3 -m kev.serve --run /models/checkpoint --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+exec python3 -m kev.serve --run {{ $checkpoint }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- else if eq $framework "strands-decider" }}
-exec strands-decider serve /models/checkpoint --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+exec strands-decider serve {{ $checkpoint }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- else if eq $framework "surogate" }}
-exec surogate serve /models/checkpoint --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+exec surogate serve {{ $checkpoint }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- else if eq $framework "decider" }}
+{{- with .Values.modelPath }}
+export DECIDER_MODEL={{ . | squote }}
+{{- else }}
+if [[ -z "${DECIDER_MODEL:-}" ]]; then
+  export DECIDER_MODEL={{ .Values.model | squote }}
+fi
+{{- end }}
 exec uvicorn decider.serve_vllm:app --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- else if eq $framework "pplx-decider" }}
 cat > /tmp/pplx-decider-server.py <<'PPLX_DECIDER_SERVER'
 {{ .Files.Get "files/pplx_decider_server.py" | trimSuffix "\n" }}
 PPLX_DECIDER_SERVER
-exec python3 /tmp/pplx-decider-server.py --checkpoint /models/checkpoint --model-name {{ .Values.model | squote }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+exec python3 /tmp/pplx-decider-server.py --checkpoint {{ $checkpoint }} --model-name {{ .Values.model | squote }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- else }}
-exec vllm serve {{ .Values.model | squote }}{{ with $dm.revision }} --revision {{ . }}{{ end }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
+exec vllm serve {{ (.Values.modelPath | default .Values.model) | squote }}{{ with $dm.revision }} --revision {{ . }}{{ end }} --host 0.0.0.0 --port {{ $dm.containerPort }}{{ with $params }} {{ . }}{{ end }}
 {{- end }}
 {{- end -}}
 

@@ -7,7 +7,6 @@ model: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
 
 # Rendered as `strands-decider serve` flags (camelCase -> --kebab-case).
 modelParameters:
-  device: cuda
   maxBatch: 16
   modelName: strands-decider-2B-qwen3.5-v1-2610
 
@@ -22,8 +21,6 @@ decisionModel:
         - strands-decider==0.2.0
         - transformers==5.19.0
         - huggingface-hub==1.31.0
-  hostDriverLibs:
-    mountDir: /usr/local/cuda-12.6/compat
 
 inference:
   serviceName: strands-decider-2b
@@ -34,22 +31,8 @@ inference:
       repository: pytorch/pytorch
       tag: 2.7.1-cuda12.6-cudnn9-runtime@sha256:2b59b1b91885677814f78be1f8df48a25d5dc952eb6580eaecfefca510f9afd3
     deployment:
+      instanceFamily: g5
       sharedMemory: 4Gi
-      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
-      # and the observability pod annotations come from the chart's decision-model defaults.
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - key: karpenter.k8s.aws/instance-family
-                  operator: In
-                  values:
-                    - g5
-            - matchExpressions:
-                - key: eks.amazonaws.com/instance-family
-                  operator: In
-                  values:
-                    - g5
       resources:
         gpu:
           requests:
@@ -59,6 +42,3 @@ inference:
           limits:
             memory: 14Gi
             ephemeral-storage: 100Gi
-    env:
-      # hostDriverLibs prepends /usr/local/cuda-12.6/compat at startup.
-      LD_LIBRARY_PATH: /opt/conda/lib/python3.11/site-packages/torch/lib:/usr/local/cuda/lib64

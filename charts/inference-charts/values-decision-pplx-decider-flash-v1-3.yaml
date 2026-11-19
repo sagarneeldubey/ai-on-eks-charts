@@ -7,8 +7,6 @@
 model: perplexity-ai/pplx-decider-flash-v1.3
 
 modelParameters:
-  device: cuda
-  mode: separate
   maxLength: 8192
   batchTokens: 8192
   cpuThreads: 4
@@ -43,27 +41,8 @@ inference:
       # The full image includes the compiler and headers required by Triton.
       tag: 3.12-bookworm@sha256:4209fae09a3e20afd863e528bfddc235da5fd5977983e1996cd54cc9a72e6267
     deployment:
-      instanceType: g5.2xlarge
+      instanceFamily: g5
       sharedMemory: 4Gi
-      podAnnotations:
-        prometheus.io/scrape: "false"
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - key: karpenter.k8s.aws/instance-family
-                  operator: In
-                  values: [g5]
-                - key: kubernetes.io/arch
-                  operator: In
-                  values: [amd64]
-            - matchExpressions:
-                - key: eks.amazonaws.com/instance-family
-                  operator: In
-                  values: [g5]
-                - key: kubernetes.io/arch
-                  operator: In
-                  values: [amd64]
       resources:
         gpu:
           requests:

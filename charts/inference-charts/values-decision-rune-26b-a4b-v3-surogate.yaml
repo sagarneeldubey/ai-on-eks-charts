@@ -34,30 +34,8 @@ inference:
       repository: ghcr.io/invergent-ai/surogate
       tag: 1.5.12@sha256:7751113d67e3773a1d7b47a57299924e0067a28ceb407ba84b0880e6368da709
     deployment:
+      instanceFamily: g7e
       sharedMemory: 16Gi
-      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
-      # and the observability pod annotations come from the chart's decision-model defaults.
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - key: karpenter.k8s.aws/instance-family
-                  operator: In
-                  values:
-                    - g7e
-                - key: kubernetes.io/arch
-                  operator: In
-                  values:
-                    - amd64
-            - matchExpressions:
-                - key: eks.amazonaws.com/instance-family
-                  operator: In
-                  values:
-                    - g7e
-                - key: kubernetes.io/arch
-                  operator: In
-                  values:
-                    - amd64
       resources:
         gpu:
           requests:
@@ -67,5 +45,3 @@ inference:
           limits:
             memory: 60Gi
             ephemeral-storage: 400Gi
-    env:
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility

@@ -217,6 +217,9 @@ tests:
           pattern: 'snapshot_download|--tensor-parallel-size'
       - matchRegex:
           path: spec.template.spec.containers[0].args[0]
+          pattern: "export DECIDER_MODEL='org/model'"
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
           pattern: 'exec uvicorn decider\.serve_vllm:app --host 0\.0\.0\.0 --port 8000\n?$'
 
   - it: downloads the pinned Perplexity snapshot and starts its native HTTP adapter
@@ -242,7 +245,7 @@ tests:
           path: spec.template.spec.containers[0].args[0]
           pattern: '--tensor-parallel-size|exec vllm serve'
 
-  - it: pins the Perplexity 27B preset to a G7e GPU with HTTP probes
+  - it: selects the G7e family for the Perplexity 27B preset with HTTP probes
     values:
       - ../values-decision-pplx-decider-v1-3.yaml
     set:
@@ -252,9 +255,15 @@ tests:
       - matchRegex:
           path: spec.template.spec.containers[0].image
           pattern: '^python:3\.12-bookworm@sha256:'
-      - equal:
+      - notExists:
           path: spec.template.spec.nodeSelector
-          value: {node.kubernetes.io/instance-type: g7e.4xlarge}
+      - equal:
+          path: spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms
+          value:
+            - matchExpressions:
+                - {key: karpenter.k8s.aws/instance-family, operator: In, values: [g7e]}
+            - matchExpressions:
+                - {key: eks.amazonaws.com/instance-family, operator: In, values: [g7e]}
       - equal:
           path: spec.template.spec.containers[0].startupProbe.httpGet.path
           value: /health
@@ -268,7 +277,7 @@ tests:
           path: spec.template.metadata.annotations["prometheus.io/scrape"]
           value: "false"
 
-  - it: pins the Perplexity Flash preset to a G5 GPU with HTTP probes
+  - it: selects the G5 family for the Perplexity Flash preset with HTTP probes
     values:
       - ../values-decision-pplx-decider-flash-v1-3.yaml
     set:
@@ -278,9 +287,15 @@ tests:
       - matchRegex:
           path: spec.template.spec.containers[0].image
           pattern: '^python:3\.12-bookworm@sha256:'
-      - equal:
+      - notExists:
           path: spec.template.spec.nodeSelector
-          value: {node.kubernetes.io/instance-type: g5.2xlarge}
+      - equal:
+          path: spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms
+          value:
+            - matchExpressions:
+                - {key: karpenter.k8s.aws/instance-family, operator: In, values: [g5]}
+            - matchExpressions:
+                - {key: eks.amazonaws.com/instance-family, operator: In, values: [g5]}
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /health
@@ -291,18 +306,14 @@ tests:
           path: spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]
           value: 1
 
-  - it: runs the pre-start script and execs vllm serve at the pinned revision for decision-vllm
+  - it: execs vllm serve at the pinned revision for decision-vllm
     set:
       inference.framework: decision-vllm
       decisionModel.revision: abc123
-      decisionModel.preStartScript: echo patched
       modelParameters:
         tensorParallelSize: 1
     documentSelector: {path: kind, value: Deployment}
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].args[0]
-          pattern: "echo patched\n"
       - notMatchRegex:
           path: spec.template.spec.containers[0].args[0]
           pattern: snapshot_download
@@ -337,6 +348,130 @@ tests:
                 - {key: eks.amazonaws.com/instance-family, operator: In, values: [g7e]}
       - exists:
           path: spec.template.spec.affinity.podAffinity
+
+  - it: combines the family with custom required and preferred node affinity
+    set:
+      inference.modelServer.deployment.instanceFamily: g5
+      inference.modelServer.deployment.nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - {key: karpenter.sh/capacity-type, operator: In, values: [on-demand]}
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            preference:
+              matchExpressions:
+                - {key: topology.kubernetes.io/zone, operator: In, values: [us-east-2a]}
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms
+          value:
+            - matchExpressions:
+                - {key: karpenter.sh/capacity-type, operator: In, values: [on-demand]}
+                - {key: karpenter.k8s.aws/instance-family, operator: In, values: [g5]}
+            - matchExpressions:
+                - {key: karpenter.sh/capacity-type, operator: In, values: [on-demand]}
+                - {key: eks.amazonaws.com/instance-family, operator: In, values: [g5]}
+      - equal:
+          path: spec.template.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight
+          value: 50
+
+  - it: uses an exact instance type without redundant family affinity
+    set:
+      inference.modelServer.deployment.instanceFamily: g5
+      inference.modelServer.deployment.instanceType: g7e.4xlarge
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value: {node.kubernetes.io/instance-type: g7e.4xlarge}
+      - notExists:
+          path: spec.template.spec.affinity.nodeAffinity
+
+  - it: serves a local checkpoint from an existing PVC without downloading or adding vLLM flags
+    set:
+      decisionModel.modelCacheExistingClaim: model-weights
+      modelPath: /models/model weights
+      vllm.loadFormat: runai_streamer
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0]
+          value: {name: model-cache, persistentVolumeClaim: {claimName: model-weights}}
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content: {name: model-cache, mountPath: /models}
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'snapshot_download|--load-format|--served-model-name|--tensor-parallel-size'
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: "exec python3 -m kev\\.serve --run '/models/model weights'"
+
+  - it: serves a local vLLM checkpoint with its original model name
+    set:
+      inference.framework: decision-vllm
+      modelPath: /models/model weights
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: "exec vllm serve '/models/model weights'.*--served-model-name org/model.*--tensor-parallel-size 1"
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: snapshot_download
+
+  - it: uses the local Decider path while respecting an explicit environment model otherwise
+    set:
+      inference.framework: decider
+      modelPath: /models/local-decider
+      inference.modelServer.env.DECIDER_MODEL: org/override
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: "export DECIDER_MODEL='/models/local-decider'"
+
+  - it: preserves a custom served name for a local vLLM checkpoint without adding a second name flag
+    set:
+      inference.framework: decision-vllm
+      modelPath: /models/local-model
+      modelParameters.servedModelName: custom-model
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: '--served-model-name custom-model'
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: '--served-model-name org/model'
+
+  - it: keeps an explicitly configured Decider environment model
+    set:
+      inference.framework: decider
+      inference.modelServer.env.DECIDER_MODEL: org/override
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: DECIDER_MODEL, value: org/override}
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'if \[\[ -z "\$\{DECIDER_MODEL:-\}" \]\]'
+
+  - it: enables scraping only for a server with a Prometheus endpoint
+    set:
+      inference.framework: decision-vllm
+      decisionModel.containerPort: 9000
+    documentSelector: {path: kind, value: Deployment}
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["prometheus.io/scrape"]
+          value: "true"
+      - equal:
+          path: spec.template.metadata.annotations["prometheus.io/port"]
+          value: "9000"
 
   - it: renders no affinity when node and pod affinity are both unset
     set:
@@ -389,8 +524,10 @@ tests:
           path: spec.template.spec.containers[0].livenessProbe
           value: {tcpSocket: {port: http}, periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 3}
       - equal:
+          path: spec.template.metadata.annotations["prometheus.io/scrape"]
+          value: "false"
+      - notExists:
           path: spec.template.metadata.annotations["prometheus.io/port"]
-          value: "8008"
 
   - it: lets deployment overrides replace probe handlers and disable the runtime class
     set:
@@ -420,9 +557,7 @@ tests:
           path: spec.template.metadata.labels["app.kubernetes.io/part-of"]
           value: custom-models
 
-  - it: allows disabling Bottlerocket host driver mounts
-    set:
-      decisionModel.hostDriverLibs.enabled: false
+  - it: relies on the NVIDIA runtime without explicit host driver mounts
     documentSelector: {path: kind, value: Deployment}
     asserts:
       - notMatchRegex:
@@ -433,26 +568,21 @@ tests:
           content:
             name: nvidia-libcuda
           any: true
-
-  - it: mounts only libcuda and NVML read-only and puts them on LD_LIBRARY_PATH
-    set:
-      decisionModel.hostDriverLibs.enabled: true
-      decisionModel.hostDriverLibs.mountDir: /usr/local/cuda/compat
-    documentSelector: {path: kind, value: Deployment}
-    asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].args[0]
-          pattern: 'export LD_LIBRARY_PATH="/usr/local/cuda/compat\$\{LD_LIBRARY_PATH:\+:\$\{LD_LIBRARY_PATH\}\}"'
-      - contains:
+      - notContains:
           path: spec.template.spec.containers[0].volumeMounts
-          content: {name: nvidia-libcuda, mountPath: /usr/local/cuda/compat/libcuda.so.1, readOnly: true}
-      - contains:
+          content:
+            name: nvidia-libcuda
+          any: true
+      - notContains:
           path: spec.template.spec.volumes
           content:
             name: nvidia-libnvidia-ml
-            hostPath:
-              path: /x86_64-bottlerocket-linux-gnu/sys-root/usr/lib/libnvidia-ml.so.1
-              type: File
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: nvidia-libnvidia-ml
+          any: true
 
   - it: requires the Kev API key secret in the Kev values file
     values:

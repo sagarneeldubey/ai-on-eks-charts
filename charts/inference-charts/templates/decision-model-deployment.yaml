@@ -12,12 +12,18 @@
 {{- /* Only unset/null values use these defaults; 0 and [] are explicit overrides. */}}
 {{- $terminationGracePeriodSeconds := ternary $defaults.terminationGracePeriodSeconds $deployment.terminationGracePeriodSeconds (kindIs "invalid" $deployment.terminationGracePeriodSeconds) }}
 {{- $runtimeClassName := ternary $defaults.runtimeClassName $deployment.runtimeClassName (kindIs "invalid" $deployment.runtimeClassName) }}
+{{- $nodeAffinity := include "inference-charts.decisionModelNodeAffinity" . | trim }}
 {{- $tolerations := $deployment.tolerations }}
 {{- if kindIs "invalid" $tolerations }}
 {{- $tolerations = $defaults.tolerations }}
 {{- end }}
-{{- $podAnnotations := deepCopy $defaults.podAnnotations }}
-{{- $_ := set $podAnnotations "prometheus.io/port" (get $podAnnotations "prometheus.io/port" | default (toString $dm.containerPort)) }}
+{{- $metricsEnabled := has .Values.inference.framework (list "decision-vllm" "surogate") }}
+{{- $podAnnotations := dict "prometheus.io/scrape" (ternary "true" "false" $metricsEnabled) }}
+{{- if $metricsEnabled }}
+{{- $_ := set $podAnnotations "prometheus.io/path" "/metrics" }}
+{{- $_ := set $podAnnotations "prometheus.io/port" (toString $dm.containerPort) }}
+{{- end }}
+{{- $podAnnotations = mergeOverwrite $podAnnotations (deepCopy ($defaults.podAnnotations | default dict)) }}
 {{- range $key, $value := ($deployment.podAnnotations | default dict) }}
 {{- $_ := set $podAnnotations $key (toString $value) }}
 {{- end }}
@@ -53,6 +59,7 @@ spec:
       # The model server never calls the Kubernetes API, so it gets no API token.
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ $terminationGracePeriodSeconds }}
+      # Apply the container runtime's syscall filter to the inference process.
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -100,6 +107,7 @@ spec:
               protocol: TCP
           resources:
             {{- include "inference-charts.acceleratorResources" . | nindent 12 }}
+          # These Python/CUDA servers need no added capabilities or privilege escalation.
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -122,14 +130,6 @@ spec:
               mountPath: /models
             - name: dshm
               mountPath: /dev/shm
-            {{- if $dm.hostDriverLibs.enabled }}
-            - name: nvidia-libcuda
-              mountPath: {{ $dm.hostDriverLibs.mountDir }}/libcuda.so.1
-              readOnly: true
-            - name: nvidia-libnvidia-ml
-              mountPath: {{ $dm.hostDriverLibs.mountDir }}/libnvidia-ml.so.1
-              readOnly: true
-            {{- end }}
       tolerations:
         {{- toYaml $tolerations | nindent 8 }}
       {{- if $deployment.instanceType }}
@@ -146,11 +146,11 @@ spec:
               "app.kubernetes.io/component": "{{ .Values.inference.serviceName }}"
       {{- end }}
       {{- $podAffinityEnabled := and $deployment.podAffinity.enabled $deployment.podAffinity.preferredDuringSchedulingIgnoredDuringExecution }}
-      {{- if or $deployment.nodeAffinity $podAffinityEnabled }}
+      {{- if or $nodeAffinity $podAffinityEnabled }}
       affinity:
-        {{- with $deployment.nodeAffinity }}
+        {{- with $nodeAffinity }}
         nodeAffinity:
-          {{- toYaml . | nindent 10 }}
+          {{- . | nindent 10 }}
         {{- end }}
         {{- if $podAffinityEnabled }}
         podAffinity:
@@ -167,25 +167,19 @@ spec:
       {{- end }}
       volumes:
         - name: model-cache
+          {{- if $dm.modelCacheExistingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ $dm.modelCacheExistingClaim | quote }}
+          {{- else }}
           emptyDir:
             sizeLimit: {{ $dm.modelCacheSize }}
+          {{- end }}
         - name: dshm
           emptyDir:
             medium: Memory
             {{- with $deployment.sharedMemory }}
             sizeLimit: {{ . }}
             {{- end }}
-        {{- if $dm.hostDriverLibs.enabled }}
-        # Mount only libcuda and NVML, read-only, so the host glibc is not exposed.
-        - name: nvidia-libcuda
-          hostPath:
-            path: {{ $dm.hostDriverLibs.hostDir }}/libcuda.so.1
-            type: File
-        - name: nvidia-libnvidia-ml
-          hostPath:
-            path: {{ $dm.hostDriverLibs.hostDir }}/libnvidia-ml.so.1
-            type: File
-        {{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -30,7 +30,7 @@ The following service is available:
 {{ .Values.inference.framework | title }} decision-model Service:
   $ kubectl get svc {{ .Values.inference.serviceName }} -n {{ .Values.inference.serviceNamespace }}
 
-  The server installs its packages and downloads the model at startup, which can take up to 30 minutes:
+  Startup can include package installs and model downloads, which can take up to 30 minutes:
   $ kubectl logs -f deployment/{{ .Values.inference.serviceName }} -n {{ .Values.inference.serviceNamespace }}
 
   In-cluster endpoint:

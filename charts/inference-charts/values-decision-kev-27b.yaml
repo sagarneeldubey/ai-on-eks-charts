@@ -55,22 +55,8 @@ inference:
       repository: python
       tag: 3.12-slim-bookworm@sha256:57d96f71de145a98e7ceca18ee4ade77bba4103a33a72dfaea026b23625c6bf0
     deployment:
+      instanceFamily: g7e
       sharedMemory: 16Gi
-      # Recreate strategy, 1800s progress deadline, 120s grace period, the nvidia.com/gpu toleration,
-      # and the observability pod annotations come from the chart's decision-model defaults.
-      nodeAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          nodeSelectorTerms:
-            - matchExpressions:
-                - key: karpenter.k8s.aws/instance-family
-                  operator: In
-                  values:
-                    - g7e
-            - matchExpressions:
-                - key: eks.amazonaws.com/instance-family
-                  operator: In
-                  values:
-                    - g7e
       resources:
         gpu:
           requests:
@@ -82,7 +68,4 @@ inference:
             ephemeral-storage: 400Gi
     env:
       KEV_BACKEND: torch
-      KEV_DTYPE: bf16
-      KEV_CUDA_GRAPHS: "1"
       KEV_PREFIX_CACHE: "1"
-      KEV_PREFIX_MAX_TOKENS: "65536"

@@ -1,4 +1,8 @@
-"""HTTP adapter for the native pplx_decider library in a pinned model snapshot."""
+"""HTTP adapter for the native pplx_decider library in a pinned model snapshot.
+
+The native library owns protocol-v4 prompts, noncausal attention, decision
+readouts, calibration and Locate; this module supplies the HTTP boundary.
+"""
 
 import argparse
 import binascii
@@ -53,7 +57,7 @@ def create_app(
     app = FastAPI(title="Perplexity Decider", lifespan=lifespan)
 
     @app.get("/health")
-    def health():
+    async def health():
         # ASGI startup completes only after the checkpoint has loaded.
         return {"status": "ok", "model": model_name}
 

@@ -17,7 +17,7 @@ The chart supports the following deployment types:
 - GPU-based Diffusers deployments
 - GPU-based NVIDIA NIM Container deployments
 - GPU-based NVIDIA NIM Operator deployments
-- GPU-based decision-model deployments (Kev and Strands Decider servers)
+- GPU-based decision-model deployments (Kev, Strands Decider, Surogate, Decider, vLLM and native Perplexity)
 - Graviton (ARM64 CPU) llama.cpp deployments
 - Graviton (ARM64 CPU) VLLM deployments
 - Neuron-based VLLM deployments
@@ -198,7 +198,8 @@ The following table lists the configurable parameters of the inference-charts ch
 | `inference.modelServer.deployment.terminationGracePeriodSeconds`         | Termination grace period for the vLLM and decision-model pods                       | Not set (decision models: `120`)                                            |
 | `inference.modelServer.deployment.tolerations`                           | Pod tolerations (vLLM, llama.cpp, decision models, and NIM container); `[]` clears tolerations | Not set (decision models: `nvidia.com/gpu` Exists NoSchedule)         |
 | `inference.modelServer.deployment.nodeAffinity`                          | Pod node affinity (decision models)                                                 | `{}`                                                                        |
-| `inference.modelServer.deployment.podAnnotations`                        | Extra pod annotations, merged over the defaults (decision models)                   | CloudWatch/OpenTelemetry auto-instrumentation off; Prometheus scrape on `decisionModel.containerPort` at `/metrics` |
+| `inference.modelServer.deployment.instanceFamily`                        | Instance family using Karpenter or EKS Auto Mode labels (decision models); `instanceType` takes precedence | Not set                                                        |
+| `inference.modelServer.deployment.podAnnotations`                        | Extra pod annotations, merged over the defaults (decision models)                   | Python auto-instrumentation off; Prometheus `/metrics` scraping enabled for decision-vllm and surogate |
 | `inference.modelServer.deployment.runtimeClassName`                      | Pod runtime class (decision models); `""` omits it                                 | Not set (decision models: `nvidia`)                                         |
 | `inference.modelServer.deployment.strategy`                              | Deployment update strategy (decision models)                                        | `{type: Recreate}`                                                          |
 | `inference.modelServer.deployment.progressDeadlineSeconds`               | Deployment progress deadline (decision models)                                      | `1800`                                                                      |
@@ -208,12 +209,10 @@ The following table lists the configurable parameters of the inference-charts ch
 | `decisionModel.extraLabels`                                             | Labels applied only to decision resources; `extraLabels` overrides matching keys   | `{app.kubernetes.io/part-of: decision-models}`                               |
 | `decisionModel.deployment`                                              | Shared decision deployment defaults; `inference.modelServer.deployment` overrides take precedence | See `values.yaml`                                               |
 | `decisionModel.containerPort`                                            | Port the decision-model server listens on in the pod                                | `8000`                                                                      |
-| `decisionModel.preStartScript`                                           | Shell lines run before the pip installs, e.g. a temporary image patch               | `""`                                                                        |
 | `decisionModel.pipInstalls`                                              | Ordered `pip install` steps: `{packages: [...], indexUrl: ...}`                     | `[]`                                                                        |
 | `decisionModel.modelCacheSize`                                           | Size limit of the `/models` emptyDir (HF cache + checkpoint)                        | `100Gi`                                                                     |
+| `decisionModel.modelCacheExistingClaim`                                  | Existing PVC mounted at `/models` instead of emptyDir; claim must be in `inference.serviceNamespace` | `""`                                                        |
 | `decisionModel.extraEnv`                                                 | Extra env vars in Kubernetes EnvVar form (supports `valueFrom` secrets)             | `[]`                                                                        |
-| `decisionModel.hostDriverLibs.enabled`                                   | Mount Bottlerocket's `libcuda.so.1` and `libnvidia-ml.so.1` read-only               | `true` (disable on other node operating systems)                            |
-| `decisionModel.hostDriverLibs.mountDir`                                  | Container directory for the driver libraries; prepended to `LD_LIBRARY_PATH`        | `/usr/local/lib`                                                            |
 | `decisionModel.startupProbe`                                             | Decision-model startup probe                                                        | HTTP `/health` on `http`, every 10s, 180 failures                            |
 | `inference.rayOptions.rayVersion`                                        | Ray version to use                                                                  | `2.47.0`                                                                    |
 | `inference.rayOptions.autoscaling.enabled`                               | Enable Ray native autoscaling                                                       | `false`                                                                     |
@@ -300,8 +299,8 @@ classifies the values file. Use the model/server name without that prefix for
 - **Decider 35B-A3B NVFP4**: `values-decision-decider-35b-a3b-nvfp4.yaml` (Decider, g7e)
 - **Gemma 4 31B**: `values-decision-gemma-4-31b-it-vllm.yaml` (vLLM, g7e)
 - **Kev 27B**: `values-decision-kev-27b.yaml` (Kev, g7e)
-- **Perplexity Decider Flash v1.3 (4B)**: `values-decision-pplx-decider-flash-v1-3.yaml` (native Perplexity, g5.2xlarge)
-- **Perplexity Decider v1.3 (27B)**: `values-decision-pplx-decider-v1-3.yaml` (native Perplexity, g7e.4xlarge)
+- **Perplexity Decider Flash v1.3 (4B)**: `values-decision-pplx-decider-flash-v1-3.yaml` (native Perplexity, g5)
+- **Perplexity Decider v1.3 (27B)**: `values-decision-pplx-decider-v1-3.yaml` (native Perplexity, g7e)
 - **Rune 26B-A4B v3**: `values-decision-rune-26b-a4b-v3-surogate.yaml` (Surogate, g7e)
 - **Strands Decider 2B**: `values-decision-strands-decider-2b.yaml` (Strands Decider, g5)
 
@@ -541,15 +540,14 @@ These frameworks serve decision models from a CUDA/Python base image:
 
 The pod runs these steps:
 
-1. Runs `decisionModel.preStartScript`, if set.
-2. Runs each `decisionModel.pipInstalls` step in order (pin every package).
+1. Runs each `decisionModel.pipInstalls` step in order (pin every package).
+2. Fails fast if CUDA is unavailable, before downloading model weights.
 3. For `kev`, `strands-decider`, `surogate` and `pplx-decider`, downloads `model` at `decisionModel.revision` from Hugging Face
-   into `/models/checkpoint`.
-4. Fails fast if CUDA is unavailable.
-5. Execs the server, with `modelParameters` as flags.
+   into `/models/checkpoint`, unless `modelPath` points to an existing local checkpoint.
+4. Execs the server, with `modelParameters` as flags.
 
 The decision presets inherit shared settings from `values.yaml`: the `decision-models` label,
-Bottlerocket driver mounts, NVIDIA runtime class, probes, rollout settings, tolerations and pod
+NVIDIA runtime class, probes, rollout settings, tolerations and pod
 annotations. These live under `decisionModel` so they apply only to decision servers. The namespace
 (`default`), replica count (`1`) and GPU request/limit (`1`) use the existing chart-wide defaults.
 Keep model revisions, images, packages, server flags, resource sizing and node placement in the preset.
@@ -559,7 +557,7 @@ Override shared deployment defaults through `inference.modelServer.deployment`; 
 Notes:
 
 - The d1-3B, Gemma 4 31B and Decider 35B-A3B presets use the digest-pinned
-  `vllm/vllm-openai:v0.33.0` image (CUDA 13). With the Bottlerocket host driver mounts, nodes need
+  `vllm/vllm-openai:v0.33.0` image (CUDA 13). Nodes need
   [CUDA 13-compatible NVIDIA drivers (R580 or newer)](https://docs.nvidia.com/deploy/cuda-compatibility/595/minor-version-compatibility.html).
 - The Perplexity Decider presets use pinned CUDA 13 PyTorch wheels and require the same R580-or-newer drivers.
 - GPU only. Startup can take up to 30 minutes, so the shared startup probe allows 180 × 10s and
@@ -569,16 +567,33 @@ Notes:
   for immediate shutdown or `inference.modelServer.deployment.tolerations: []` to clear tolerations.
 - Probes default to HTTP `/health` checks on the `http` port. Kev overrides all three handlers with TCP
   checks, setting `httpGet: null` to remove the inherited HTTP handler while retaining the probe timings.
-- The pod runs with `automountServiceAccountToken: false`, the `RuntimeDefault` seccomp profile, no privilege
-  escalation, and all capabilities dropped.
-- Bottlerocket driver mounts are enabled by default and mount only `libcuda.so.1` and `libnvidia-ml.so.1`
-  from the host, read-only. Set `decisionModel.hostDriverLibs.enabled: false` on other node operating systems.
+- The pod runs with `automountServiceAccountToken: false` because the server does not call the Kubernetes API.
+  `RuntimeDefault` applies the container runtime's syscall filter. Dropping all Linux capabilities and
+  disabling privilege escalation limit the privileges available during startup and HTTP request handling;
+  these Python/CUDA servers do not require added capabilities.
+- Python auto-instrumentation is disabled to avoid altering the server dependencies. Prometheus scraping
+  is enabled for vLLM and Surogate; Kev, Strands, Decider and the Perplexity adapter have no `/metrics` endpoint.
+- The NVIDIA container runtime provides the CUDA and NVML driver libraries.
 - The shared runtime class is `nvidia`. The NVIDIA GPU Operator creates that RuntimeClass
   (`enable_nvidia_gpu_operator = true` in the AI on EKS infrastructure); without it, pods are rejected.
-- Scheduling uses `inference.modelServer.deployment.nodeAffinity`; the example values require the g7e or g5
-  instance family via both Karpenter and EKS Auto Mode node labels.
-- The Service is `ClusterIP`. Kev enforces its API key (`kev-api-key` secret); the other servers have no
+- Scheduling uses `inference.modelServer.deployment.instanceFamily` for g7e or g5, with a helper generating
+  alternatives for Karpenter and EKS Auto Mode. Custom required `nodeAffinity` terms are combined with the family
+  requirement. An exact `instanceType` takes precedence over `instanceFamily`. Perplexity 27B uses the g7e
+  family; Perplexity Flash uses g5. Flash requests 20 GiB of host memory, excluding the 16 GiB g5.xlarge.
+- The Service defaults to `ClusterIP`. Kev enforces its API key (`kev-api-key` secret); the other servers have no
   built-in authentication, so keep them cluster-internal.
+
+The `/models` cache uses `emptyDir` by default. To persist it across pod replacements, supply an existing PVC:
+
+```yaml
+decisionModel:
+  modelCacheExistingClaim: decision-model-cache
+```
+
+The claim must exist in the pod namespace (`inference.serviceNamespace`) and support the pod's access requirements. With a PVC,
+`modelCacheSize` does not set its capacity. To serve weights already stored on it, set `modelPath` to their
+directory under `/models`; native servers skip the Hugging Face download, `decision-vllm` serves that path,
+and Decider receives it through `DECIDER_MODEL`.
 
 ### Native Perplexity Decider API
 
@@ -589,6 +604,16 @@ It preserves the checkpoint's calibrated probabilities and uses the reference in
 `mode: separate`; Locate adapters load on their first extraction request.
 Both presets use the full Python Bookworm image, which includes the compiler and C headers
 Triton needs to compile its CUDA launcher on first inference.
+
+The native adapter is specific to these v1.3 checkpoints. SGLang
+[supports earlier Perplexity Decider releases](https://docs.sglang.ai/cookbook/autoregressive/Perplexity/PPLX-Decider-v1.1-27B),
+including noncausal attention. The v1.3 snapshot instead declares protocol v4 (`joint-chunked-readout-v1`),
+with readouts at `<|fim_suffix|>` markers, and adds Locate extraction. The SGLang
+[handler inspected for this PR](https://github.com/sgl-project/sglang/blob/d08d15985b731db38824d7297b37cf1265e030b1/python/sglang/srt/entrypoints/systemone/serving.py)
+builds the earlier chat-format prompts, and its
+[request schema](https://github.com/sgl-project/sglang/blob/d08d15985b731db38824d7297b37cf1265e030b1/python/sglang/srt/entrypoints/systemone/protocol.py)
+supports `choice`, `noul` and `score` without `locate`. The chart supplies the HTTP endpoints;
+the checkpoint's native library owns prompt construction, attention, readouts, calibration and Locate.
 
 Requests contain `state` and a `questions` map with native `choice`, `noul`, `score` or `locate` questions.
 A JSON array batches requests and returns responses in the same order. Images must be inline base64
@@ -894,7 +919,7 @@ helm install strands-decider-2b ai-on-eks/inference-charts -f https://raw.github
 
 ### Deploy Perplexity Decider v1.3 and Flash v1.3 decision models
 
-The presets require Bottlerocket nodes with the NVIDIA RuntimeClass and an R580-or-newer driver.
+The presets require the NVIDIA RuntimeClass and an R580-or-newer driver; they were tested on Bottlerocket nodes.
 If Hugging Face requires access credentials, create the `hf-token` secret first
 (see [Create Hugging Face Token Secret](#create-hugging-face-token-secret-gated-models-only)).
 
